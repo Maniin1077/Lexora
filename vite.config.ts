@@ -5,6 +5,6 @@ export default defineConfig({
   cloudflare: false,
   plugins: [nitro({ preset: "vercel" })],
   vite: {
-    base: process.env.VERCEL ? "/" : "/Lexora/",
+    base: "/",
   },
 });
