@@ -2,14 +2,12 @@ import {
   createContext,
   useContext,
   useEffect,
-  useMemo,
   useState,
   type ReactNode,
 } from "react";
-import type { User } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
 
 export const AUTH_ACCOUNTS_KEY = "lexora.auth.accounts";
+export const AUTH_SESSION_KEY = "lexora.auth.session";
 export const AUTH_ADMIN_EMAILS_KEY = "lexora.auth.admin-emails";
 export const AUTH_OWNER_EMAILS_KEY = "lexora.auth.owner-emails";
 export const AUTH_CHANGED_EVENT = "lexora:auth-changed";
@@ -27,6 +25,9 @@ interface LocalProfileRecord {
   course: string;
   institute: string;
   email: string;
+  password: string;
+  securityQuestion: string;
+  securityAnswer: string;
   createdAt: string;
 }
 
@@ -78,14 +79,18 @@ interface AuthCtx {
   signInWithPassword: (
     email: string,
     password: string,
-    captchaToken?: string,
   ) => Promise<void>;
-  register: (input: RegisterInput, captchaToken?: string) => Promise<void>;
+  register: (input: RegisterInput) => Promise<void>;
   updateProfile: (input: ProfileUpdateInput) => Promise<void>;
-  resetPassword: (email: string) => Promise<void>;
-  completePasswordReset: (newPassword: string) => Promise<void>;
-  updatePassword: (newPassword: string) => Promise<void>;
-  changeEmail: (newEmail: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<string>;
+  completePasswordReset: (
+    email: string,
+    securityAnswer: string,
+    newPassword: string,
+  ) => Promise<void>;
+  updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  changeEmail: (currentPassword: string, newEmail: string) => Promise<void>;
+  updateSecurityQuestion: (question: string, answer: string) => Promise<void>;
   grantOwnerAccess: (email: string) => Promise<void>;
   revokeOwnerAccess: (email: string) => Promise<void>;
   grantAdminAccess: (email: string) => Promise<void>;
@@ -120,10 +125,22 @@ function dispatchAuthChanged() {
   window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
 }
 
-function readProfiles(): LocalProfileRecord[] {
+function normalizeSecurityAnswer(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(value.trim());
+}
+
+function isGmailEmail(value: string) {
+  return normalizeEmail(value).endsWith("@gmail.com");
+}
+
+function readAccounts(): LocalProfileRecord[] {
   if (typeof window === "undefined") return [];
 
-  const raw = safeParse<Array<Partial<LocalProfileRecord> & { password?: string }>>(
+  const raw = safeParse<Array<Partial<LocalProfileRecord>>>(
     localStorage.getItem(AUTH_ACCOUNTS_KEY),
     [],
   );
@@ -133,7 +150,6 @@ function readProfiles(): LocalProfileRecord[] {
       const email = normalizeEmail(String(item.email ?? ""));
       const id = String(item.id ?? "").trim() || makeId();
       const createdAt = String(item.createdAt ?? "").trim() || new Date().toISOString();
-
       return {
         id,
         firstName: String(item.firstName ?? "").trim(),
@@ -141,17 +157,56 @@ function readProfiles(): LocalProfileRecord[] {
         course: String(item.course ?? "").trim(),
         institute: String(item.institute ?? "").trim(),
         email,
+        password: String(item.password ?? ""),
+        securityQuestion: String(item.securityQuestion ?? "").trim(),
+        securityAnswer: normalizeSecurityAnswer(String(item.securityAnswer ?? "")),
         createdAt,
       } satisfies LocalProfileRecord;
     })
     .filter((item) => item.email.length > 0);
 
+  const needsRewrite = normalized.length !== raw.length || raw.some((item, index) => {
+    const next = normalized[index];
+    return (
+      !next ||
+      item.email !== next.email ||
+      item.password !== next.password ||
+      item.securityQuestion !== next.securityQuestion ||
+      item.securityAnswer !== next.securityAnswer ||
+      item.createdAt !== next.createdAt ||
+      item.firstName !== next.firstName ||
+      item.lastName !== next.lastName ||
+      item.course !== next.course ||
+      item.institute !== next.institute
+    );
+  });
+
+  if (needsRewrite) {
+    localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(normalized));
+  }
+
   return normalized;
+}
+
+function readProfiles(): LocalProfileRecord[] {
+  return readAccounts();
 }
 
 function writeProfiles(profiles: LocalProfileRecord[]) {
   if (typeof window === "undefined") return;
   localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(profiles));
+  dispatchAuthChanged();
+}
+
+function setSession(accountId: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(AUTH_SESSION_KEY, accountId);
+  dispatchAuthChanged();
+}
+
+function clearSession() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(AUTH_SESSION_KEY);
   dispatchAuthChanged();
 }
 
@@ -321,56 +376,6 @@ function toAuthUser(profile: LocalProfileRecord): AuthUser {
   };
 }
 
-function inferAuthErrorMessage(error: unknown, fallback: string): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const message = raw.toLowerCase();
-
-  if (message.includes("email not confirmed") || message.includes("email not verified")) {
-    return "Please verify your email before logging in.";
-  }
-  if (message.includes("invalid login credentials")) {
-    return "Incorrect email or password.";
-  }
-  if (message.includes("user already registered")) {
-    return "An account with this email already exists.";
-  }
-  if (message.includes("captcha")) {
-    return "CAPTCHA validation failed. Please try again.";
-  }
-  if (message.includes("failed to fetch") || message.includes("network") || message.includes("fetch")) {
-    return "Network error: unable to reach authentication server. Check your internet connection and SUPABASE_URL.";
-  }
-  if (message.includes("password") && message.includes("6")) {
-    return "Password must be at least 6 characters.";
-  }
-
-  return raw || fallback;
-}
-
-function validEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(email);
-}
-
-function getBaseUrl() {
-  if (typeof window !== "undefined") return window.location.origin;
-  const fromEnv = import.meta.env.VITE_SITE_URL;
-  return typeof fromEnv === "string" ? fromEnv : "";
-}
-
-function mergeProfileFromUser(existing: LocalProfileRecord | null, authUser: User): LocalProfileRecord {
-  const normalizedEmail = normalizeEmail(authUser.email ?? "");
-
-  return {
-    id: existing?.id ?? authUser.id,
-    firstName: existing?.firstName ?? "",
-    lastName: existing?.lastName ?? "",
-    course: existing?.course ?? "",
-    institute: existing?.institute ?? "",
-    email: normalizedEmail,
-    createdAt: existing?.createdAt ?? new Date().toISOString(),
-  };
-}
-
 function upsertProfile(record: LocalProfileRecord): LocalProfileRecord {
   const profiles = readProfiles();
   const idx = profiles.findIndex(
@@ -395,6 +400,85 @@ function upsertProfile(record: LocalProfileRecord): LocalProfileRecord {
   return merged;
 }
 
+function replaceEmailInAccessLists(oldEmail: string, nextEmail: string) {
+  const normalizedOld = normalizeEmail(oldEmail);
+  const normalizedNext = normalizeEmail(nextEmail);
+
+  const owners = readOwnerEmails();
+  if (owners.includes(normalizedOld)) {
+    writeOwnerEmails(
+      owners.map((ownerEmail) =>
+        ownerEmail === normalizedOld ? normalizedNext : ownerEmail,
+      ),
+    );
+  }
+
+  const admins = readAdminEmails();
+  if (admins.includes(normalizedOld)) {
+    writeAdminEmails(
+      admins.map((adminEmail) =>
+        adminEmail === normalizedOld ? normalizedNext : adminEmail,
+      ),
+    );
+  }
+}
+
+function findAccountByEmail(email: string) {
+  const normalized = normalizeEmail(email);
+  return readProfiles().find((account) => account.email === normalized) ?? null;
+}
+
+function updateAccountById(
+  accountId: string,
+  updater: (account: LocalProfileRecord) => LocalProfileRecord,
+) {
+  const profiles = readProfiles();
+  const index = profiles.findIndex((account) => account.id === accountId);
+
+  if (index === -1) {
+    throw new Error("Could not find your account.");
+  }
+
+  const nextProfile = updater(profiles[index]);
+  const nextProfiles = [...profiles];
+  nextProfiles[index] = nextProfile;
+  writeProfiles(nextProfiles);
+  return nextProfile;
+}
+
+function requireCurrentAccount(user: AuthUser | null) {
+  if (!user) {
+    throw new Error("You must be signed in to continue.");
+  }
+
+  const account = readProfiles().find((item) => item.id === user.id) ?? null;
+  if (!account) {
+    throw new Error("Could not find your account.");
+  }
+
+  return account;
+}
+
+function requireValidGmail(email: string) {
+  const normalized = normalizeEmail(email);
+
+  if (!normalized) {
+    throw new Error("Email is required.");
+  }
+  if (!isValidEmail(normalized)) {
+    throw new Error("Please enter a valid email address.");
+  }
+  if (!isGmailEmail(normalized)) {
+    throw new Error('Email must end with "@gmail.com".');
+  }
+
+  return normalized;
+}
+
+function updateLocalAccessListsForEmailChange(oldEmail: string, nextEmail: string) {
+  replaceEmailInAccessLists(oldEmail, nextEmail);
+}
+
 function ensureRegisteredEmail(email: string) {
   const normalized = normalizeEmail(email);
   const exists = readProfiles().some((account) => account.email === normalized);
@@ -410,95 +494,97 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
-    const hydrateFromSupabaseUser = async (supabaseUser: User | null) => {
-      if (!mounted) return;
-
-      if (!supabaseUser || !supabaseUser.email) {
-        setUser(null);
+    const hydrate = async () => {
+      if (typeof window === "undefined") {
         setLoading(false);
         return;
       }
 
-      if (!supabaseUser.email_confirmed_at) {
-        await supabase.auth.signOut();
-        setUser(null);
-        setLoading(false);
+      const accounts = readProfiles();
+      const sessionId = localStorage.getItem(AUTH_SESSION_KEY);
+
+      if (!sessionId) {
+        if (mounted) {
+          setUser(null);
+          setLoading(false);
+        }
         return;
       }
 
-      const profiles = readProfiles();
-      const existing =
-        profiles.find((item) => item.id === supabaseUser.id) ??
-        profiles.find((item) => item.email === normalizeEmail(supabaseUser.email ?? "")) ??
-        null;
-
-      const mergedProfile = mergeProfileFromUser(existing, supabaseUser);
-      const persistedProfile = upsertProfile(mergedProfile);
+      const account = accounts.find((item) => item.id === sessionId) ?? null;
+      if (!account) {
+        clearSession();
+        if (mounted) {
+          setUser(null);
+          setLoading(false);
+        }
+        return;
+      }
 
       if (mounted) {
-        setUser(toAuthUser(persistedProfile));
+        setUser(toAuthUser(account));
         setLoading(false);
-      }
-    };
-
-    const hydrate = async () => {
-      try {
-        const { data, error } = await supabase.auth.getUser();
-        if (error) {
-          setUser(null);
-          return;
-        }
-        await hydrateFromSupabaseUser(data.user ?? null);
-      } catch {
-        setUser(null);
-      } finally {
-        if (mounted) setLoading(false);
       }
     };
 
     void hydrate();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      void hydrateFromSupabaseUser(session?.user ?? null);
-    });
+    const onStorage = (event: StorageEvent) => {
+      if (
+        event.key === null ||
+        event.key === AUTH_SESSION_KEY ||
+        event.key === AUTH_ACCOUNTS_KEY ||
+        event.key === AUTH_ADMIN_EMAILS_KEY ||
+        event.key === AUTH_OWNER_EMAILS_KEY
+      ) {
+        void hydrate();
+      }
+    };
+
+    const onAuthChanged = () => {
+      void hydrate();
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
     };
   }, []);
 
   const signInWithPassword = async (
     email: string,
     password: string,
-    captchaToken?: string,
   ) => {
+    if (typeof window === "undefined") return;
+
     const normalizedEmail = normalizeEmail(email);
 
     if (!normalizedEmail || !password) {
       throw new Error("Email and password are required.");
     }
-    if (!validEmail(normalizedEmail)) {
+    if (!isValidEmail(normalizedEmail)) {
       throw new Error("Please enter a valid email address.");
     }
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: normalizedEmail,
-      password,
-    });
+    const account = findAccountByEmail(normalizedEmail);
 
-    if (error) {
-      throw new Error(inferAuthErrorMessage(error, "Could not sign in."));
+    if (!account) {
+      throw new Error("No account found for this email.");
+    }
+    if (account.password !== password) {
+      throw new Error("Incorrect email or password.");
     }
 
-    if (!data.user?.email_confirmed_at) {
-      await supabase.auth.signOut();
-      throw new Error("Please verify your email before logging in.");
-    }
+    setSession(account.id);
+    setUser(toAuthUser(account));
   };
 
-  const register = async (input: RegisterInput, captchaToken?: string) => {
+  const register = async (input: RegisterInput) => {
+    if (typeof window === "undefined") return;
+
     const firstName = input.firstName.trim();
     const lastName = input.lastName.trim();
     const course = input.course.trim();
@@ -509,13 +595,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!firstName || !lastName || !course || !institute || !email || !password) {
       throw new Error("Please fill all fields.");
     }
-    if (!validEmail(email)) {
+    if (!isValidEmail(email)) {
       throw new Error("Please enter a valid email address.");
+    }
+    if (!isGmailEmail(email)) {
+      throw new Error('Email must end with "@gmail.com".');
     }
     if (password.length < 6) {
       throw new Error("Password must be at least 6 characters.");
     }
-    // captchaToken is optional when CAPTCHA is removed from the UI
+
+    const accounts = readProfiles();
+    if (accounts.some((account) => account.email === email)) {
+      throw new Error("An account with this email already exists.");
+    }
 
     const profileSeed: LocalProfileRecord = {
       id: makeId(),
@@ -524,23 +617,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       course,
       institute,
       email,
+      password,
+      securityQuestion: "",
+      securityAnswer: "",
       createdAt: new Date().toISOString(),
     };
-    upsertProfile(profileSeed);
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${getBaseUrl()}/login`,
-      },
-    });
-
-    if (error) {
-      throw new Error(inferAuthErrorMessage(error, "Could not create account."));
-    }
-
-    await supabase.auth.signOut();
+    writeProfiles([profileSeed, ...accounts]);
+    setSession(profileSeed.id);
+    setUser(toAuthUser(profileSeed));
   };
 
   const updateProfile = async (input: ProfileUpdateInput) => {
@@ -559,18 +644,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("Please fill all profile fields.");
     }
 
-    const existing = readProfiles().find((record) => record.id === user.id) ?? {
-      id: user.id,
-      firstName: "",
-      lastName: "",
-      course: "",
-      institute: "",
-      email: normalizeEmail(user.email),
-      createdAt: new Date().toISOString(),
-    };
-
     const next = upsertProfile({
-      ...existing,
+      ...requireCurrentAccount(user),
       ...profile,
       email: normalizeEmail(user.email),
     });
@@ -578,83 +653,132 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(toAuthUser(next));
   };
 
-  const resetPassword = async (email: string) => {
+  const requestPasswordReset = async (email: string) => {
     const normalizedEmail = normalizeEmail(email);
     if (!normalizedEmail) {
       throw new Error("Email is required.");
     }
-    if (!validEmail(normalizedEmail)) {
+    if (!isValidEmail(normalizedEmail)) {
       throw new Error("Please enter a valid email address.");
     }
 
-    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-      redirectTo: `${getBaseUrl()}/login`,
-    });
-
-    if (error) {
-      throw new Error(inferAuthErrorMessage(error, "Could not send reset email."));
+    const account = findAccountByEmail(normalizedEmail);
+    if (!account) {
+      throw new Error("No account found for this email.");
     }
+    if (!account.securityQuestion || !account.securityAnswer) {
+      throw new Error("This account has no security question set yet.");
+    }
+
+    return account.securityQuestion;
   };
 
-  const completePasswordReset = async (newPassword: string) => {
-    if (newPassword.trim().length < 6) {
-      throw new Error("Password must be at least 6 characters.");
-    }
+  const completePasswordReset = async (
+    email: string,
+    securityAnswer: string,
+    newPassword: string,
+  ) => {
+    const normalizedEmail = normalizeEmail(email);
+    const password = newPassword.trim();
+    const normalizedAnswer = normalizeSecurityAnswer(securityAnswer);
 
-    const { error } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
-
-    if (error) {
-      throw new Error(inferAuthErrorMessage(error, "Could not update password."));
-    }
-  };
-
-  const updatePassword = async (newPassword: string) => {
-    if (!user) {
-      throw new Error("You must be signed in to change password.");
-    }
-
-    await completePasswordReset(newPassword);
-  };
-
-  const changeEmail = async (newEmail: string) => {
-    if (!user) {
-      throw new Error("You must be signed in to change email.");
-    }
-
-    const normalizedEmail = normalizeEmail(newEmail);
     if (!normalizedEmail) {
       throw new Error("Email is required.");
     }
-    if (!validEmail(normalizedEmail)) {
+    if (!isValidEmail(normalizedEmail)) {
       throw new Error("Please enter a valid email address.");
     }
-    if (normalizedEmail === normalizeEmail(user.email)) {
+    if (!normalizedAnswer) {
+      throw new Error("Security answer is required.");
+    }
+    if (password.length < 6) {
+      throw new Error("Password must be at least 6 characters.");
+    }
+
+    const account = findAccountByEmail(normalizedEmail);
+    if (!account) {
+      throw new Error("No account found for this email.");
+    }
+    if (!account.securityQuestion || !account.securityAnswer) {
+      throw new Error("This account has no security question set yet.");
+    }
+    if (account.securityAnswer !== normalizedAnswer) {
+      throw new Error("Incorrect security answer.");
+    }
+
+    updateAccountById(account.id, (current) => ({
+      ...current,
+      password,
+    }));
+  };
+
+  const updatePassword = async (currentPassword: string, newPassword: string) => {
+    const activeUser = requireCurrentAccount(user);
+    const password = newPassword.trim();
+
+    if (!currentPassword) {
+      throw new Error("Current password is required.");
+    }
+    if (activeUser.password !== currentPassword) {
+      throw new Error("Current password is incorrect.");
+    }
+    if (password.length < 6) {
+      throw new Error("Password must be at least 6 characters.");
+    }
+
+    const next = updateAccountById(activeUser.id, (current) => ({
+      ...current,
+      password,
+    }));
+
+    setUser(toAuthUser(next));
+  };
+
+  const changeEmail = async (currentPassword: string, newEmail: string) => {
+    const activeUser = requireCurrentAccount(user);
+    const normalizedEmail = requireValidGmail(newEmail);
+
+    if (!currentPassword) {
+      throw new Error("Current password is required.");
+    }
+    if (activeUser.password !== currentPassword) {
+      throw new Error("Current password is incorrect.");
+    }
+    if (normalizedEmail === normalizeEmail(activeUser.email)) {
       throw new Error("New email is the same as your current email.");
     }
-
-    const { error } = await supabase.auth.updateUser(
-      { email: normalizedEmail },
-      { emailRedirectTo: `${getBaseUrl()}/profile` },
-    );
-
-    if (error) {
-      throw new Error(inferAuthErrorMessage(error, "Could not start email update."));
+    if (readProfiles().some((record) => record.email === normalizedEmail)) {
+      throw new Error("An account with this email already exists.");
     }
 
-    upsertProfile({
-      ...(readProfiles().find((record) => record.id === user.id) ?? {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        course: user.course,
-        institute: user.institute,
-        email: normalizeEmail(user.email),
-        createdAt: new Date().toISOString(),
-      }),
-      email: normalizeEmail(user.email),
-    });
+    const next = updateAccountById(activeUser.id, (current) => ({
+      ...current,
+      email: normalizedEmail,
+    }));
+
+    updateLocalAccessListsForEmailChange(activeUser.email, normalizedEmail);
+    setUser(toAuthUser(next));
+  };
+
+  const updateSecurityQuestion = async (question: string, answer: string) => {
+    const activeUser = requireCurrentAccount(user);
+    const securityQuestion = question.trim();
+    const securityAnswer = normalizeSecurityAnswer(answer);
+
+    if (!securityQuestion) {
+      throw new Error("Security question is required.");
+    }
+    if (!securityAnswer) {
+      throw new Error("Security answer is required.");
+    }
+
+    const next = updateAccountById(activeUser.id, (current) => ({
+      ...current,
+      securityQuestion,
+      securityAnswer,
+    }));
+
+    setUser(toAuthUser(next));
   };
 
   const grantAdminAccess = async (email: string) => {
@@ -763,7 +887,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    clearSession();
     setUser(null);
   };
 
@@ -775,42 +899,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const adminEmails = [SYSTEM_ADMIN_EMAIL, ...managedAdminEmails];
   const isProfileComplete = hasCompleteProfile(user);
 
-  const value = useMemo<AuthCtx>(
-    () => ({
-      user,
-      loading,
-      role,
-      isOwner,
-      isAdmin,
-      ownerEmails,
-      adminEmails,
-      managedAdminEmails,
-      isProfileComplete,
-      signInWithPassword,
-      register,
-      updateProfile,
-      resetPassword,
-      completePasswordReset,
-      updatePassword,
-      changeEmail,
-      grantOwnerAccess,
-      revokeOwnerAccess,
-      grantAdminAccess,
-      revokeAdminAccess,
-      signOut,
-    }),
-    [
-      user,
-      loading,
-      role,
-      isOwner,
-      isAdmin,
-      ownerEmails,
-      adminEmails,
-      managedAdminEmails,
-      isProfileComplete,
-    ],
-  );
+  const value: AuthCtx = {
+    user,
+    loading,
+    role,
+    isOwner,
+    isAdmin,
+    ownerEmails,
+    adminEmails,
+    managedAdminEmails,
+    isProfileComplete,
+    signInWithPassword,
+    register,
+    updateProfile,
+    requestPasswordReset,
+    completePasswordReset,
+    updatePassword,
+    changeEmail,
+    updateSecurityQuestion,
+    grantOwnerAccess,
+    revokeOwnerAccess,
+    grantAdminAccess,
+    revokeAdminAccess,
+    signOut,
+  };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

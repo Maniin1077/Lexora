@@ -1,21 +1,15 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { FormEvent, useEffect, useState } from "react";
+import { Calendar, KeyRound, LockKeyhole, Mail, ShieldCheck, Trash2 } from "lucide-react";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { PageHero } from "@/components/site/PageHero";
-import { useAuth } from "@/hooks/useAuth";
-import { FormEvent, useEffect, useState } from "react";
+import { AUTH_ACCOUNTS_KEY, useAuth } from "@/hooks/useAuth";
 import {
   APPLIED_CHANGED_EVENT,
+  AppliedItem,
   getApplied,
   removeApplied,
-  AppliedItem,
 } from "@/lib/applications";
-import {
-  ExternalLink,
-  Mail,
-  ShieldCheck,
-  Trash2,
-  Calendar,
-} from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/profile")({
@@ -31,6 +25,23 @@ export const Route = createFileRoute("/profile")({
   component: ProfilePage,
 });
 
+function readCurrentSecurityQuestion(email: string) {
+  if (typeof window === "undefined") return "";
+
+  try {
+    const raw = localStorage.getItem(AUTH_ACCOUNTS_KEY);
+    const accounts = raw
+      ? (JSON.parse(raw) as Array<{ email?: string; securityQuestion?: string }>)
+      : [];
+    const match = accounts.find(
+      (account) => String(account.email ?? "").trim().toLowerCase() === email.trim().toLowerCase(),
+    );
+    return String(match?.securityQuestion ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
 function ProfilePage() {
   const {
     user,
@@ -41,19 +52,26 @@ function ProfilePage() {
     updateProfile,
     updatePassword,
     changeEmail,
+    updateSecurityQuestion,
     signOut,
   } = useAuth();
   const navigate = useNavigate();
   const [applied, setApplied] = useState<AppliedItem[]>([]);
   const [savingProfile, setSavingProfile] = useState(false);
-  const [savingSecurity, setSavingSecurity] = useState(false);
+  const [savingRecovery, setSavingRecovery] = useState(false);
+  const [savingCredentials, setSavingCredentials] = useState(false);
   const [profileForm, setProfileForm] = useState({
     firstName: "",
     lastName: "",
     course: "",
     institute: "",
   });
-  const [securityForm, setSecurityForm] = useState({
+  const [recoveryForm, setRecoveryForm] = useState({
+    securityQuestion: "",
+    securityAnswer: "",
+  });
+  const [credentialForm, setCredentialForm] = useState({
+    currentPassword: "",
     newEmail: "",
     newPassword: "",
   });
@@ -77,7 +95,16 @@ function ProfilePage() {
       course: user.course,
       institute: user.institute,
     });
-  }, [user?.firstName, user?.lastName, user?.course, user?.institute]);
+    setRecoveryForm({
+      securityQuestion: readCurrentSecurityQuestion(user.email),
+      securityAnswer: "",
+    });
+    setCredentialForm({
+      currentPassword: "",
+      newEmail: user.email,
+      newPassword: "",
+    });
+  }, [user?.email, user?.firstName, user?.lastName, user?.course, user?.institute]);
 
   if (loading || !user) {
     return (
@@ -116,46 +143,79 @@ function ProfilePage() {
     }
   };
 
-  const handleSecuritySave = async (event: FormEvent<HTMLFormElement>) => {
+  const handleRecoverySave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const newEmail = securityForm.newEmail.trim();
-    const newPassword = securityForm.newPassword;
+    if (!recoveryForm.securityQuestion.trim() || !recoveryForm.securityAnswer.trim()) {
+      toast.error("Add both a security question and answer.");
+      return;
+    }
 
+    try {
+      setSavingRecovery(true);
+      await updateSecurityQuestion(recoveryForm.securityQuestion, recoveryForm.securityAnswer);
+      toast.success("Security question saved.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error("Could not save security question.", { description: message });
+    } finally {
+      setSavingRecovery(false);
+    }
+  };
+
+  const handleCredentialSave = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const currentPassword = credentialForm.currentPassword.trim();
+    const newEmail = credentialForm.newEmail.trim();
+    const newPassword = credentialForm.newPassword;
+
+    if (!currentPassword) {
+      toast.error("Enter your current password first.");
+      return;
+    }
     if (!newEmail && !newPassword) {
-      toast.error("Add a new email or password to update security settings.");
+      toast.error("Add a new email or password to update credentials.");
       return;
     }
-
-    if (newEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(newEmail)) {
-      toast.error("Please enter a valid new email address.");
-      return;
+    if (newEmail) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(newEmail)) {
+        toast.error("Please enter a valid new email address.");
+        return;
+      }
+      if (!newEmail.trim().toLowerCase().endsWith("@gmail.com")) {
+        toast.error('Email must end with "@gmail.com".');
+        return;
+      }
     }
-
     if (newPassword && newPassword.length < 6) {
       toast.error("New password must be at least 6 characters.");
       return;
     }
 
     try {
-      setSavingSecurity(true);
+      setSavingCredentials(true);
 
       if (newPassword) {
-        await updatePassword(newPassword);
+        await updatePassword(currentPassword, newPassword);
         toast.success("Password updated successfully.");
       }
 
       if (newEmail) {
-        await changeEmail(newEmail);
-        toast.success("Verification emails sent. Confirm email change from your inbox.");
+        await changeEmail(currentPassword, newEmail);
+        toast.success("Email updated successfully.");
       }
 
-      setSecurityForm({ newEmail: "", newPassword: "" });
+      setCredentialForm((prev) => ({
+        ...prev,
+        currentPassword: "",
+        newPassword: "",
+      }));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      toast.error("Could not update security settings.", { description: message });
+      toast.error("Could not update credentials.", { description: message });
     } finally {
-      setSavingSecurity(false);
+      setSavingCredentials(false);
     }
   };
 
@@ -178,9 +238,7 @@ function ProfilePage() {
                 {initials}
               </div>
               <div className="min-w-0">
-                <p className="truncate font-display text-lg text-primary">
-                  {name}
-                </p>
+                <p className="truncate font-display text-lg text-primary">{name}</p>
                 <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
                   <Mail className="h-3 w-3" /> {user.email}
                 </p>
@@ -261,25 +319,91 @@ function ProfilePage() {
               </button>
             </form>
 
-            <form onSubmit={handleSecuritySave} className="mt-4 space-y-3 rounded-md border border-border/80 p-3">
+            <form
+              onSubmit={handleRecoverySave}
+              className="mt-4 space-y-3 rounded-md border border-border/80 p-3"
+            >
               <p className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                Account Security
+                Recovery Question
               </p>
+
+              <label className="block text-left">
+                <span className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <KeyRound className="h-3 w-3" /> Security Question
+                </span>
+                <input
+                  value={recoveryForm.securityQuestion}
+                  onChange={(e) =>
+                    setRecoveryForm((prev) => ({ ...prev, securityQuestion: e.target.value }))
+                  }
+                  placeholder="e.g. What is my favorite city?"
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-gold focus:outline-none"
+                />
+              </label>
+
+              <label className="block text-left">
+                <span className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <LockKeyhole className="h-3 w-3" /> Security Answer
+                </span>
+                <input
+                  value={recoveryForm.securityAnswer}
+                  onChange={(e) =>
+                    setRecoveryForm((prev) => ({ ...prev, securityAnswer: e.target.value }))
+                  }
+                  placeholder="Enter your answer"
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-gold focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  This answer is used for password recovery.
+                </p>
+              </label>
+
+              <button
+                type="submit"
+                disabled={savingRecovery}
+                className="w-full rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-secondary disabled:opacity-60"
+              >
+                {savingRecovery ? "Saving..." : "Save Recovery Question"}
+              </button>
+            </form>
+
+            <form
+              onSubmit={handleCredentialSave}
+              className="mt-4 space-y-3 rounded-md border border-border/80 p-3"
+            >
+              <p className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                Account Credentials
+              </p>
+
+              <label className="block text-left">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  Current Password
+                </span>
+                <input
+                  type="password"
+                  value={credentialForm.currentPassword}
+                  onChange={(e) =>
+                    setCredentialForm((prev) => ({ ...prev, currentPassword: e.target.value }))
+                  }
+                  placeholder="Enter your current password"
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-gold focus:outline-none"
+                />
+              </label>
 
               <label className="block text-left">
                 <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
                   New Email Address
                 </span>
                 <input
-                  value={securityForm.newEmail}
+                  value={credentialForm.newEmail}
                   onChange={(e) =>
-                    setSecurityForm((prev) => ({ ...prev, newEmail: e.target.value }))
+                    setCredentialForm((prev) => ({ ...prev, newEmail: e.target.value }))
                   }
-                  placeholder="e.g. your@email.com"
+                  placeholder="anydemo@gmail.com"
                   className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-gold focus:outline-none"
                 />
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Supabase will send verification links before changing your email.
+                  New email must end with @gmail.com and cannot already be in use.
                 </p>
               </label>
 
@@ -289,26 +413,21 @@ function ProfilePage() {
                 </span>
                 <input
                   type="password"
-                  value={securityForm.newPassword}
+                  value={credentialForm.newPassword}
                   onChange={(e) =>
-                    setSecurityForm((prev) => ({ ...prev, newPassword: e.target.value }))
+                    setCredentialForm((prev) => ({ ...prev, newPassword: e.target.value }))
                   }
                   placeholder="Create a password (min 6 characters)"
                   className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-gold focus:outline-none"
                 />
-                {securityForm.newPassword.length > 0 && securityForm.newPassword.length < 6 && (
-                  <p className="mt-1 text-[11px] text-destructive">
-                    Password must be at least 6 characters.
-                  </p>
-                )}
               </label>
 
               <button
                 type="submit"
-                disabled={savingSecurity}
+                disabled={savingCredentials}
                 className="w-full rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-secondary disabled:opacity-60"
               >
-                {savingSecurity ? "Updating..." : "Update Security"}
+                {savingCredentials ? "Updating..." : "Update Credentials"}
               </button>
             </form>
 
@@ -343,12 +462,8 @@ function ProfilePage() {
 
           <div className="md:col-span-2">
             <div className="flex items-center justify-between">
-              <h2 className="font-display text-2xl text-primary">
-                Applied Opportunities
-              </h2>
-              <span className="text-xs text-muted-foreground">
-                {applied.length} total
-              </span>
+              <h2 className="font-display text-2xl text-primary">Applied Opportunities</h2>
+              <span className="text-xs text-muted-foreground">{applied.length} total</span>
             </div>
             {applied.length === 0 ? (
               <div className="mt-4 rounded-2xl border border-dashed border-border bg-card p-10 text-center">
@@ -373,11 +488,7 @@ function ProfilePage() {
             ) : (
               <ul className="mt-4 space-y-3">
                 {applied.map((item) => (
-                  <AppliedOpportunityRow
-                    key={item.id}
-                    item={item}
-                    userEmail={user.email}
-                  />
+                  <AppliedOpportunityRow key={item.id} item={item} userEmail={user.email} />
                 ))}
               </ul>
             )}
@@ -395,9 +506,7 @@ function AppliedOpportunityRow({
   item: AppliedItem;
   userEmail: string;
 }) {
-  const closed = item.deadline
-    ? new Date(item.deadline).getTime() < Date.now()
-    : false;
+  const closed = item.deadline ? new Date(item.deadline).getTime() < Date.now() : false;
 
   return (
     <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -406,8 +515,7 @@ function AppliedOpportunityRow({
         <p className="text-xs text-muted-foreground">{item.organization}</p>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <Calendar className="h-3 w-3" /> Applied on{" "}
-            {new Date(item.appliedAt).toLocaleDateString()}
+            <Calendar className="h-3 w-3" /> Applied on {new Date(item.appliedAt).toLocaleDateString()}
           </p>
           <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] uppercase tracking-wide text-secondary-foreground">
             {item.kind === "magazine" ? "Magazine" : "Internship"}
@@ -434,7 +542,7 @@ function AppliedOpportunityRow({
             rel="noreferrer"
             className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-secondary"
           >
-            Open <ExternalLink className="h-3 w-3" />
+            Open
           </a>
         )}
         <button

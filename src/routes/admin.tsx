@@ -62,6 +62,9 @@ import {
   MAGAZINES_KEY,
   getMagazines,
 } from "@/lib/magazines";
+import {
+  createNotification,
+} from "@/lib/notifications";
 import { MEMBERS_CHANGED_EVENT, MEMBERS_KEY, getMembers } from "@/lib/members";
 import {
   BadgeCheck,
@@ -71,6 +74,7 @@ import {
   Image as ImageIcon,
   Newspaper,
   RefreshCcw,
+  MessageSquareText,
   ShieldCheck,
   Sparkles,
   UserPlus,
@@ -254,6 +258,12 @@ function AdminPage() {
   const [savingPage, setSavingPage] = useState<PageHeroKey | null>(null);
   const [savingNavigation, setSavingNavigation] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [messageForm, setMessageForm] = useState({
+    targetEmail: "",
+    title: "",
+    message: "",
+  });
 
   const loadDashboard = useCallback(() => {
     const snapshot = collectStats(role, adminEmails.length, managedAdminEmails.length);
@@ -507,6 +517,51 @@ function AdminPage() {
       toast.error("Could not revoke owner access.", { description: message });
     } finally {
       setRevokingOwnerEmail(null);
+    }
+  };
+
+  const submitImportantMessage = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const targetEmail = messageForm.targetEmail.trim().toLowerCase();
+    const title = messageForm.title.trim();
+    const message = messageForm.message.trim();
+
+    if (!title || !message) {
+      toast.error("Add both a title and message.");
+      return;
+    }
+
+    if (targetEmail) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(targetEmail)) {
+        toast.error("Please enter a valid recipient email.");
+        return;
+      }
+
+      const registered = getAllUsersForAdmin().some((account) => account.email === targetEmail);
+      if (!registered) {
+        toast.error("Recipient email must belong to a registered user.");
+        return;
+      }
+    }
+
+    try {
+      setSendingMessage(true);
+      createNotification({
+        targetEmail: targetEmail || null,
+        title,
+        message,
+        senderEmail: actorEmail,
+      });
+      setMessageForm({ targetEmail: "", title: "", message: "" });
+      toast.success(targetEmail ? "Message sent to user." : "Message sent to all users.", {
+        duration: 1500,
+      });
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      toast.error("Could not send message.", { description: messageText });
+    } finally {
+      setSendingMessage(false);
     }
   };
 
@@ -800,6 +855,85 @@ function AdminPage() {
               </p>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-7xl px-6 pb-6">
+        <div className="rounded-2xl border border-border bg-card p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-accent">Messaging</p>
+              <h2 className="mt-2 font-display text-2xl text-primary">
+                Send Important Message
+              </h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Send a notification to one registered user or leave the recipient blank to broadcast it to everyone.
+              </p>
+            </div>
+            <MessageSquareText className="h-8 w-8 text-accent" />
+          </div>
+
+          <form onSubmit={submitImportantMessage} className="mt-5 grid gap-4 lg:grid-cols-2">
+            <label className="block text-left">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Recipient Email
+              </span>
+              <input
+                type="email"
+                value={messageForm.targetEmail}
+                onChange={(event) =>
+                  setMessageForm((prev) => ({ ...prev, targetEmail: event.target.value }))
+                }
+                placeholder="Leave blank to send to all users"
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-gold/70"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                If empty, the message will appear for every signed-in user.
+              </p>
+            </label>
+
+            <label className="block text-left">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Title
+              </span>
+              <input
+                value={messageForm.title}
+                onChange={(event) =>
+                  setMessageForm((prev) => ({ ...prev, title: event.target.value }))
+                }
+                placeholder="e.g. Profile update required"
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-gold/70"
+              />
+            </label>
+
+            <label className="block text-left lg:col-span-2">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Message
+              </span>
+              <textarea
+                value={messageForm.message}
+                onChange={(event) =>
+                  setMessageForm((prev) => ({ ...prev, message: event.target.value }))
+                }
+                rows={4}
+                placeholder="Write an important update for users"
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-gold/70"
+              />
+            </label>
+
+            <div className="lg:col-span-2 flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Messages are stored locally and shown with an unread dot in the header bell.
+              </p>
+              <button
+                type="submit"
+                disabled={sendingMessage}
+                className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              >
+                {sendingMessage ? "Sending..." : "Send Message"}
+              </button>
+            </div>
+          </form>
         </div>
       </section>
 

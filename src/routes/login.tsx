@@ -1,8 +1,7 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
-import { FormEvent, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
@@ -19,22 +18,15 @@ export const Route = createFileRoute("/login")({
   component: LoginPage,
 });
 
-type AuthMode = "signin" | "create" | "forgot" | "reset";
-
-function hasLetter(value: string) {
-  return /[a-z]/i.test(value);
-}
-
-function hasNumber(value: string) {
-  return /\d/.test(value);
-}
-
-function hasSpecial(value: string) {
-  return /[^a-z\d]/i.test(value);
-}
+type AuthMode = "signin" | "create" | "forgot";
+type ForgotStep = "email" | "reset";
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(value.trim());
+}
+
+function isGmailEmail(value: string) {
+  return value.trim().toLowerCase().endsWith("@gmail.com");
 }
 
 function LoginPage() {
@@ -42,14 +34,14 @@ function LoginPage() {
     user,
     signInWithPassword,
     register,
-    resetPassword,
+    requestPasswordReset,
     completePasswordReset,
     loading,
   } = useAuth();
 
-  
-
   const [mode, setMode] = useState<AuthMode>("signin");
+  const [forgotStep, setForgotStep] = useState<ForgotStep>("email");
+  const [forgotQuestion, setForgotQuestion] = useState("");
   const [busy, setBusy] = useState(false);
 
   const [signInForm, setSignInForm] = useState({ email: "", password: "" });
@@ -61,51 +53,17 @@ function LoginPage() {
     email: "",
     password: "",
   });
-  const [forgotForm, setForgotForm] = useState({ email: "" });
-  const [resetForm, setResetForm] = useState({ newPassword: "" });
-
-  
+  const [forgotForm, setForgotForm] = useState({
+    email: "",
+    securityAnswer: "",
+    newPassword: "",
+  });
 
   const navigate = useNavigate();
 
   useEffect(() => {
     if (!loading && user) navigate({ to: "/profile" });
   }, [loading, user, navigate]);
-
-  useEffect(() => {
-    const bootstrapRecovery = async () => {
-      if (typeof window === "undefined") return;
-
-      const hash = window.location.hash.startsWith("#")
-        ? window.location.hash.slice(1)
-        : window.location.hash;
-      const params = new URLSearchParams(hash);
-
-      const accessToken = params.get("access_token");
-      const refreshToken = params.get("refresh_token");
-      const type = params.get("type");
-
-      if (!accessToken || !refreshToken || type !== "recovery") {
-        return;
-      }
-
-      const { error } = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-
-      if (error) {
-        toast.error("This password reset link is invalid or expired.");
-        return;
-      }
-
-      window.history.replaceState({}, "", window.location.pathname);
-      setMode("reset");
-      toast.success("Reset link verified. Set your new password.");
-    };
-
-    void bootstrapRecovery();
-  }, []);
 
   const createEmailError = useMemo(() => {
     if (!createForm.email) return "";
@@ -114,6 +72,9 @@ function LoginPage() {
     }
     if (!isValidEmail(createForm.email)) {
       return "Please enter a valid email domain (example: gmail.com).";
+    }
+    if (!isGmailEmail(createForm.email)) {
+      return 'Email must end with "@gmail.com".';
     }
     return "";
   }, [createForm.email]);
@@ -140,25 +101,25 @@ function LoginPage() {
     return "";
   }, [forgotForm.email]);
 
-  const createPasswordChecks = useMemo(
-    () => ({
-      minLength: createForm.password.length >= 6,
-      letter: hasLetter(createForm.password),
-      number: hasNumber(createForm.password),
-      special: hasSpecial(createForm.password),
-    }),
-    [createForm.password],
-  );
+  const createPasswordReady = createForm.password.length >= 6;
+  const forgotPasswordReady = forgotForm.newPassword.length >= 6;
 
-  const resetPasswordChecks = useMemo(
-    () => ({
-      minLength: resetForm.newPassword.length >= 6,
-      letter: hasLetter(resetForm.newPassword),
-      number: hasNumber(resetForm.newPassword),
-      special: hasSpecial(resetForm.newPassword),
-    }),
-    [resetForm.newPassword],
-  );
+  const titleByMode: Record<AuthMode, string> = {
+    signin: "Sign in to continue",
+    create: "Create your account",
+    forgot:
+      forgotStep === "email" ? "Forgot your password" : "Answer your security question",
+  };
+
+  const subtitleByMode: Record<AuthMode, string> = {
+    signin: "Sign in with your verified email and password.",
+    create:
+      "Create an account and keep your recovery details updated in your profile.",
+    forgot:
+      forgotStep === "email"
+        ? "Enter your email to load the security question saved on your account."
+        : "Answer your security question and choose a new password.",
+  };
 
   const handlePasswordSignIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -167,6 +128,7 @@ function LoginPage() {
       toast.error(signInEmailError);
       return;
     }
+
     try {
       setBusy(true);
       await signInWithPassword(signInForm.email, signInForm.password);
@@ -186,14 +148,15 @@ function LoginPage() {
       toast.error(createEmailError);
       return;
     }
-    if (!createPasswordChecks.minLength) {
+    if (!createPasswordReady) {
       toast.error("Password must be at least 6 characters.");
       return;
     }
+
     try {
       setBusy(true);
       await register(createForm);
-      toast.success("Account created. Verify your email before signing in.");
+      toast.success("Account created. You are now signed in.");
       setCreateForm({
         firstName: "",
         lastName: "",
@@ -202,7 +165,6 @@ function LoginPage() {
         email: "",
         password: "",
       });
-      
       setMode("signin");
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -215,60 +177,44 @@ function LoginPage() {
   const handleForgotPassword = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (forgotEmailError) {
+    if (forgotStep === "email" && forgotEmailError) {
       toast.error(forgotEmailError);
       return;
     }
 
     try {
       setBusy(true);
-      await resetPassword(forgotForm.email);
-      toast.success("Reset link sent. Please check your email inbox.");
-      setForgotForm({ email: "" });
-      setMode("signin");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      toast.error("Could not send reset email.", { description: message });
-    } finally {
-      setBusy(false);
-    }
-  };
 
-  const handleCompleteReset = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+      if (forgotStep === "email") {
+        const question = await requestPasswordReset(forgotForm.email);
+        setForgotQuestion(question);
+        setForgotStep("reset");
+        toast.success("Security question loaded. Answer it to continue.");
+        return;
+      }
 
-    if (!resetPasswordChecks.minLength) {
-      toast.error("Password must be at least 6 characters.");
-      return;
-    }
+      if (!forgotPasswordReady) {
+        toast.error("Password must be at least 6 characters.");
+        return;
+      }
 
-    try {
-      setBusy(true);
-      await completePasswordReset(resetForm.newPassword);
+      await completePasswordReset(
+        forgotForm.email,
+        forgotForm.securityAnswer,
+        forgotForm.newPassword,
+      );
       toast.success("Password updated. You can now sign in.");
-      setResetForm({ newPassword: "" });
+      setSignInForm((prev) => ({ ...prev, email: forgotForm.email }));
+      setForgotForm({ email: "", securityAnswer: "", newPassword: "" });
+      setForgotQuestion("");
+      setForgotStep("email");
       setMode("signin");
-      await supabase.auth.signOut();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       toast.error("Could not reset password.", { description: message });
     } finally {
       setBusy(false);
     }
-  };
-
-  const titleByMode: Record<AuthMode, string> = {
-    signin: "Sign in to continue",
-    create: "Create your account",
-    forgot: "Forgot your password",
-    reset: "Set a new password",
-  };
-
-  const subtitleByMode: Record<AuthMode, string> = {
-    signin: "Sign in with your verified email and password.",
-    create: "Create an account and verify your email before first login.",
-    forgot: "Enter your email. We will send a secure password reset link.",
-    reset: "Enter a new password for your account.",
   };
 
   const validationTextClass = "mt-1 text-[11px]";
@@ -288,8 +234,6 @@ function LoginPage() {
           </h1>
           <p className="mt-3 text-sm text-muted-foreground">{subtitleByMode[mode]}</p>
 
-          
-
           {mode === "signin" && (
             <form onSubmit={handlePasswordSignIn} className="mt-8 space-y-4 text-left">
               <label className="block">
@@ -302,7 +246,7 @@ function LoginPage() {
                   onChange={(e) =>
                     setSignInForm((prev) => ({ ...prev, email: e.target.value }))
                   }
-                  placeholder="e.g. your@email.com"
+                  placeholder="anydemo@gmail.com"
                   autoComplete="email"
                   required
                   className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-gold/70"
@@ -322,19 +266,21 @@ function LoginPage() {
                   onChange={(e) =>
                     setSignInForm((prev) => ({ ...prev, password: e.target.value }))
                   }
-                  placeholder="Create a password (min 6 characters)"
                   autoComplete="current-password"
                   required
                   className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-gold/70"
                 />
               </label>
 
-              
-
               <div className="flex items-center justify-between text-xs">
                 <button
                   type="button"
-                  onClick={() => setMode("forgot")}
+                  onClick={() => {
+                    setMode("forgot");
+                    setForgotStep("email");
+                    setForgotQuestion("");
+                    setForgotForm({ email: "", securityAnswer: "", newPassword: "" });
+                  }}
                   className="text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
                 >
                   Forgot password?
@@ -435,7 +381,7 @@ function LoginPage() {
                   onChange={(e) =>
                     setCreateForm((prev) => ({ ...prev, email: e.target.value }))
                   }
-                  placeholder="e.g. your@email.com"
+                  placeholder="anydemo@gmail.com"
                   autoComplete="email"
                   required
                   className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-gold/70"
@@ -462,23 +408,16 @@ function LoginPage() {
                 />
                 <p
                   className={`${validationTextClass} ${
-                    createPasswordChecks.minLength
+                    createPasswordReady
                       ? "text-emerald-600 dark:text-emerald-400"
                       : "text-destructive"
                   }`}
                 >
-                  {createPasswordChecks.minLength
+                  {createPasswordReady
                     ? "Password length looks good."
                     : "Password must be at least 6 characters."}
                 </p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Strength hints: {createPasswordChecks.letter ? "letter" : "no letter"}, {" "}
-                  {createPasswordChecks.number ? "number" : "no number"}, {" "}
-                  {createPasswordChecks.special ? "special character" : "no special character"}
-                </p>
               </label>
-
-              
 
               <button
                 type="submit"
@@ -500,95 +439,148 @@ function LoginPage() {
 
           {mode === "forgot" && (
             <form onSubmit={handleForgotPassword} className="mt-8 space-y-4 text-left">
-              <label className="block">
-                <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Email Address
-                </span>
-                <input
-                  type="email"
-                  value={forgotForm.email}
-                  onChange={(e) =>
-                    setForgotForm((prev) => ({ ...prev, email: e.target.value }))
-                  }
-                  placeholder="e.g. your@email.com"
-                  autoComplete="email"
-                  required
-                  className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-gold/70"
-                />
-                {forgotEmailError && (
-                  <p className={`${validationTextClass} text-destructive`}>{forgotEmailError}</p>
-                )}
-              </label>
+              {forgotStep === "email" ? (
+                <>
+                  <label className="block">
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Email Address
+                    </span>
+                    <input
+                      type="email"
+                      value={forgotForm.email}
+                      onChange={(e) =>
+                        setForgotForm((prev) => ({ ...prev, email: e.target.value }))
+                      }
+                      placeholder="anydemo@gmail.com"
+                      autoComplete="email"
+                      required
+                      className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-gold/70"
+                    />
+                    {forgotEmailError && (
+                      <p className={`${validationTextClass} text-destructive`}>
+                        {forgotEmailError}
+                      </p>
+                    )}
+                  </label>
 
-              <button
-                type="submit"
-                disabled={busy}
-                className="inline-flex w-full items-center justify-center rounded-md bg-primary px-5 py-3 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
-              >
-                {busy ? "Sending link..." : "Reset password"}
-              </button>
+                  <p className="text-xs text-muted-foreground">
+                    The account must already have a security question saved in profile settings.
+                  </p>
 
-              <button
-                type="button"
-                onClick={() => setMode("signin")}
-                className="w-full text-xs text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
-              >
-                Back to sign in
-              </button>
+                  <div className="flex items-center justify-between text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setMode("signin")}
+                      className="text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
+                    >
+                      Back to sign in
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMode("create")}
+                      className="text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
+                    >
+                      Create account
+                    </button>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="inline-flex w-full items-center justify-center rounded-md bg-primary px-5 py-3 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+                  >
+                    {busy ? "Checking account..." : "Find security question"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-xl border border-border bg-muted/40 p-4">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      Security Question
+                    </p>
+                    <p className="mt-2 text-sm text-foreground">{forgotQuestion}</p>
+                  </div>
+
+                  <label className="block">
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Security Answer
+                    </span>
+                    <input
+                      value={forgotForm.securityAnswer}
+                      onChange={(e) =>
+                        setForgotForm((prev) => ({ ...prev, securityAnswer: e.target.value }))
+                      }
+                      placeholder="Enter your answer"
+                      autoComplete="off"
+                      required
+                      className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-gold/70"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                      New Password
+                    </span>
+                    <input
+                      type="password"
+                      value={forgotForm.newPassword}
+                      onChange={(e) =>
+                        setForgotForm((prev) => ({ ...prev, newPassword: e.target.value }))
+                      }
+                      placeholder="Create a password (min 6 characters)"
+                      autoComplete="new-password"
+                      required
+                      className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-gold/70"
+                    />
+                    <p
+                      className={`${validationTextClass} ${
+                        forgotPasswordReady
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-destructive"
+                      }`}
+                    >
+                      {forgotPasswordReady
+                        ? "Password length looks good."
+                        : "Password must be at least 6 characters."}
+                    </p>
+                  </label>
+
+                  <div className="flex items-center justify-between text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotStep("email");
+                        setForgotQuestion("");
+                        setForgotForm((prev) => ({
+                          ...prev,
+                          securityAnswer: "",
+                          newPassword: "",
+                        }));
+                      }}
+                      className="text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
+                    >
+                      Use a different email
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMode("create")}
+                      className="text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
+                    >
+                      Create account
+                    </button>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="inline-flex w-full items-center justify-center rounded-md bg-primary px-5 py-3 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+                  >
+                    {busy ? "Updating password..." : "Reset password"}
+                  </button>
+                </>
+              )}
             </form>
           )}
-
-          {mode === "reset" && (
-            <form onSubmit={handleCompleteReset} className="mt-8 space-y-4 text-left">
-              <label className="block">
-                <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                  New Password
-                </span>
-                <input
-                  type="password"
-                  value={resetForm.newPassword}
-                  onChange={(e) =>
-                    setResetForm((prev) => ({ ...prev, newPassword: e.target.value }))
-                  }
-                  placeholder="Create a password (min 6 characters)"
-                  autoComplete="new-password"
-                  required
-                  className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-gold/70"
-                />
-                <p
-                  className={`${validationTextClass} ${
-                    resetPasswordChecks.minLength
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-destructive"
-                  }`}
-                >
-                  {resetPasswordChecks.minLength
-                    ? "Password length looks good."
-                    : "Password must be at least 6 characters."}
-                </p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Strength hints: {resetPasswordChecks.letter ? "letter" : "no letter"}, {" "}
-                  {resetPasswordChecks.number ? "number" : "no number"}, {" "}
-                  {resetPasswordChecks.special ? "special character" : "no special character"}
-                </p>
-              </label>
-
-              <button
-                type="submit"
-                disabled={busy}
-                className="inline-flex w-full items-center justify-center rounded-md bg-primary px-5 py-3 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
-              >
-                {busy ? "Updating password..." : "Set new password"}
-              </button>
-            </form>
-          )}
-
-          <Link
-            to="/"
-            className="mt-6 inline-block text-xs text-muted-foreground underline-offset-4 hover:underline"
-          >
-            Back to home
-          </Link>
         </div>
       </section>
     </SiteLayout>
