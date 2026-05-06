@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { PageHero } from "@/components/site/PageHero";
-import { Mail, Phone, Linkedin, Instagram } from "lucide-react";
+import { Mail, Linkedin, Instagram } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
@@ -83,26 +83,38 @@ function ContactPage() {
       />
       <section className="mx-auto max-w-5xl px-6 py-20">
         <div className="grid gap-6 md:grid-cols-2">
-          <a
-            href={`mailto:${contact.email}`}
-            onClick={(e) => requireLoginForExternal(e, "email link")}
-            className="group rounded-xl border border-border bg-card p-8 transition hover:border-gold"
-          >
-            <Mail className="h-7 w-7 text-accent" />
-            <h3 className="mt-4 font-display text-2xl text-primary">Email</h3>
-            <p className="mt-2 text-foreground/85 group-hover:text-accent">
-              {contact.email}
-            </p>
-          </a>
           <div className="rounded-xl border border-border bg-card p-8">
-            <Phone className="h-7 w-7 text-accent" />
-            <h3 className="mt-4 font-display text-2xl text-primary">Phone</h3>
-            <p className="mt-2 text-foreground/85">
-              {contact.phonePrimaryLabel} — {contact.phonePrimaryNumber}
-            </p>
-            <p className="text-foreground/85">
-              {contact.phoneSecondaryLabel} — {contact.phoneSecondaryNumber}
-            </p>
+            <Mail className="h-7 w-7 text-accent" />
+            <h3 className="mt-4 font-display text-2xl text-primary">
+              Email
+            </h3>
+            <a
+              href={`mailto:${contact.email}`}
+              onClick={(e) => requireLoginForExternal(e, "email link")}
+              className="mt-3 block text-foreground/85 hover:text-accent"
+            >
+              {contact.email}
+            </a>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-8">
+            <Mail className="h-7 w-7 text-accent" />
+            <h3 className="mt-4 font-display text-2xl text-primary">
+              Member Contacts
+            </h3>
+            <div className="mt-3 space-y-2 text-foreground/85">
+              <a
+                href={`mailto:${contact.secondaryEmail}`}
+                className="block hover:text-accent"
+              >
+                {contact.secondaryEmailLabel}: {contact.secondaryEmail}
+              </a>
+              <a
+                href={`mailto:${contact.tertiaryEmail}`}
+                className="block hover:text-accent"
+              >
+                {contact.tertiaryEmailLabel}: {contact.tertiaryEmail}
+              </a>
+            </div>
           </div>
           <a
             href={contact.linkedInUrl}

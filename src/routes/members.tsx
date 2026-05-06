@@ -15,7 +15,7 @@ import {
 } from "@/lib/members";
 import { logChange } from "@/lib/change-log";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2, Upload, X } from "lucide-react";
+import { Download, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 
 export const Route = createFileRoute("/members")({
   head: () => ({
@@ -355,9 +355,6 @@ function MemberDialog({
         <h2 className="font-display text-2xl text-primary">
           {isEditing ? "Edit Member" : "Add Member"}
         </h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Update member name, image, and team role.
-        </p>
 
         <form onSubmit={submit} className="mt-5 space-y-3 text-sm">
           <div>
@@ -392,38 +389,36 @@ function MemberDialog({
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted-foreground">
-              Image URL or Data URL *
+            <label className="text-xs font-medium text-muted-foreground block mb-2">
+              Image *
             </label>
-            <input
-              value={form.image}
-              onChange={(e) => setForm({ ...form, image: e.target.value })}
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-gold focus:outline-none"
-              placeholder="https://example.com/photo.jpg"
-            />
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary">
+              <Upload className="h-3.5 w-3.5" /> Upload image
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => onPickImage(e.target.files?.[0] ?? null)}
+              />
+            </label>
           </div>
 
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary">
-            <Upload className="h-3.5 w-3.5" /> Upload image file
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => onPickImage(e.target.files?.[0] ?? null)}
-            />
-          </label>
-
           {form.image && (
-            <div className="rounded-md border border-border p-2">
-              <img
-                src={form.image}
-                alt="Member preview"
-                className="h-20 w-20 rounded-full object-cover"
-              />
+            <div className="rounded-lg border border-border bg-background p-3">
+              <p className="text-[11px] text-muted-foreground mb-2">Preview</p>
+              <div className="flex justify-center">
+                <div className="h-32 w-32 overflow-hidden rounded-full ring-2 ring-gold/30">
+                  <img
+                    src={form.image}
+                    alt="Member preview"
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+              </div>
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-2 pt-2">
+          <div className="flex items-center justify-end gap-2 pt-4">
             <button
               type="button"
               onClick={onClose}

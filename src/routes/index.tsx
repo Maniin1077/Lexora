@@ -138,11 +138,13 @@ function HomePage() {
                 className="absolute inset-0 rounded-full blur-3xl"
                 style={{ background: "var(--gradient-gold)", opacity: 0.4 }}
               />
-              <img
-                src={hero.image}
-                alt="Lexora Community emblem"
-                className="relative h-72 w-72 rounded-full ring-4 ring-gold/30 md:h-96 md:w-96"
-              />
+              <div className="relative h-72 w-72 overflow-hidden rounded-full ring-4 ring-gold/30 md:h-96 md:w-96">
+                <img
+                  src={hero.image}
+                  alt="Lexora Community emblem"
+                  className="h-full w-full scale-[1.08] object-cover"
+                />
+              </div>
             </div>
           </div>
         </div>

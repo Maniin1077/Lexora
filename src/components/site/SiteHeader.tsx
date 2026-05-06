@@ -77,11 +77,13 @@ export function SiteHeader() {
     <header className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex h-20 max-w-7xl items-center gap-4 px-6">
         <Link to="/" className="flex items-center gap-3">
-          <img
-            src={logo}
-            alt="Lexora Community logo"
-            className="h-12 w-12 rounded-full ring-1 ring-gold/40"
-          />
+          <div className="h-12 w-12 overflow-hidden rounded-full ring-1 ring-gold/40">
+            <img
+              src={logo}
+              alt="Lexora Community logo"
+              className="h-full w-full scale-[1.14] object-cover"
+            />
+          </div>
           <div className="flex flex-col leading-tight">
             <span className="font-display text-2xl font-semibold text-primary">
               Lexora

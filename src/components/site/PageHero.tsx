@@ -64,7 +64,7 @@ export function PageHero({
             "radial-gradient(circle at 20% 30%, oklch(0.72 0.13 75 / 0.4), transparent 40%), radial-gradient(circle at 80% 70%, oklch(0.72 0.13 75 / 0.25), transparent 50%)",
         }}
       />
-      <div className="relative mx-auto max-w-5xl px-6 py-24 text-center text-primary-foreground">
+      <div className="relative mx-auto max-w-5xl px-6 py-16 text-center text-primary-foreground">
         {content.eyebrow && (
           <p className="text-xs uppercase tracking-[0.35em] text-gold">
             {content.eyebrow}

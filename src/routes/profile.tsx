@@ -39,16 +39,23 @@ function ProfilePage() {
     isAdmin,
     isProfileComplete,
     updateProfile,
+    updatePassword,
+    changeEmail,
     signOut,
   } = useAuth();
   const navigate = useNavigate();
   const [applied, setApplied] = useState<AppliedItem[]>([]);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [savingSecurity, setSavingSecurity] = useState(false);
   const [profileForm, setProfileForm] = useState({
     firstName: "",
     lastName: "",
     course: "",
     institute: "",
+  });
+  const [securityForm, setSecurityForm] = useState({
+    newEmail: "",
+    newPassword: "",
   });
 
   useEffect(() => {
@@ -106,6 +113,49 @@ function ProfilePage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       toast.error("Could not log out", { description: message });
+    }
+  };
+
+  const handleSecuritySave = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const newEmail = securityForm.newEmail.trim();
+    const newPassword = securityForm.newPassword;
+
+    if (!newEmail && !newPassword) {
+      toast.error("Add a new email or password to update security settings.");
+      return;
+    }
+
+    if (newEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(newEmail)) {
+      toast.error("Please enter a valid new email address.");
+      return;
+    }
+
+    if (newPassword && newPassword.length < 6) {
+      toast.error("New password must be at least 6 characters.");
+      return;
+    }
+
+    try {
+      setSavingSecurity(true);
+
+      if (newPassword) {
+        await updatePassword(newPassword);
+        toast.success("Password updated successfully.");
+      }
+
+      if (newEmail) {
+        await changeEmail(newEmail);
+        toast.success("Verification emails sent. Confirm email change from your inbox.");
+      }
+
+      setSecurityForm({ newEmail: "", newPassword: "" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error("Could not update security settings.", { description: message });
+    } finally {
+      setSavingSecurity(false);
     }
   };
 
@@ -208,6 +258,57 @@ function ProfilePage() {
                 className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
               >
                 {savingProfile ? "Saving…" : "Save Profile"}
+              </button>
+            </form>
+
+            <form onSubmit={handleSecuritySave} className="mt-4 space-y-3 rounded-md border border-border/80 p-3">
+              <p className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                Account Security
+              </p>
+
+              <label className="block text-left">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  New Email Address
+                </span>
+                <input
+                  value={securityForm.newEmail}
+                  onChange={(e) =>
+                    setSecurityForm((prev) => ({ ...prev, newEmail: e.target.value }))
+                  }
+                  placeholder="e.g. your@email.com"
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-gold focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Supabase will send verification links before changing your email.
+                </p>
+              </label>
+
+              <label className="block text-left">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  New Password
+                </span>
+                <input
+                  type="password"
+                  value={securityForm.newPassword}
+                  onChange={(e) =>
+                    setSecurityForm((prev) => ({ ...prev, newPassword: e.target.value }))
+                  }
+                  placeholder="Create a password (min 6 characters)"
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-gold focus:outline-none"
+                />
+                {securityForm.newPassword.length > 0 && securityForm.newPassword.length < 6 && (
+                  <p className="mt-1 text-[11px] text-destructive">
+                    Password must be at least 6 characters.
+                  </p>
+                )}
+              </label>
+
+              <button
+                type="submit"
+                disabled={savingSecurity}
+                className="w-full rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-secondary disabled:opacity-60"
+              >
+                {savingSecurity ? "Updating..." : "Update Security"}
               </button>
             </form>
 

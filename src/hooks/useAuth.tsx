@@ -2,12 +2,14 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useState,
-  ReactNode,
+  type ReactNode,
 } from "react";
+import type { User } from "@supabase/supabase-js";
+import { supabase } from "@/integrations/supabase/client";
 
 export const AUTH_ACCOUNTS_KEY = "lexora.auth.accounts";
-export const AUTH_SESSION_KEY = "lexora.auth.session";
 export const AUTH_ADMIN_EMAILS_KEY = "lexora.auth.admin-emails";
 export const AUTH_OWNER_EMAILS_KEY = "lexora.auth.owner-emails";
 export const AUTH_CHANGED_EVENT = "lexora:auth-changed";
@@ -18,14 +20,13 @@ export const MAX_ADMINS = 2;
 
 export type UserRole = "owner" | "admin" | "user";
 
-interface LocalAccountRecord {
+interface LocalProfileRecord {
   id: string;
   firstName: string;
   lastName: string;
   course: string;
   institute: string;
   email: string;
-  password: string;
   createdAt: string;
 }
 
@@ -74,10 +75,17 @@ interface AuthCtx {
   adminEmails: string[];
   managedAdminEmails: string[];
   isProfileComplete: boolean;
-  signInWithPassword: (email: string, password: string) => Promise<void>;
-  register: (input: RegisterInput) => Promise<void>;
+  signInWithPassword: (
+    email: string,
+    password: string,
+    captchaToken?: string,
+  ) => Promise<void>;
+  register: (input: RegisterInput, captchaToken?: string) => Promise<void>;
   updateProfile: (input: ProfileUpdateInput) => Promise<void>;
-  resetPassword: (email: string, newPassword: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  completePasswordReset: (newPassword: string) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
+  changeEmail: (newEmail: string) => Promise<void>;
   grantOwnerAccess: (email: string) => Promise<void>;
   revokeOwnerAccess: (email: string) => Promise<void>;
   grantAdminAccess: (email: string) => Promise<void>;
@@ -100,30 +108,51 @@ function safeParse<T>(raw: string | null, fallback: T): T {
   }
 }
 
-function readAccounts(): LocalAccountRecord[] {
+function makeId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function dispatchAuthChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
+}
+
+function readProfiles(): LocalProfileRecord[] {
   if (typeof window === "undefined") return [];
-  return safeParse<LocalAccountRecord[]>(
+
+  const raw = safeParse<Array<Partial<LocalProfileRecord> & { password?: string }>>(
     localStorage.getItem(AUTH_ACCOUNTS_KEY),
     [],
   );
+
+  const normalized = raw
+    .map((item) => {
+      const email = normalizeEmail(String(item.email ?? ""));
+      const id = String(item.id ?? "").trim() || makeId();
+      const createdAt = String(item.createdAt ?? "").trim() || new Date().toISOString();
+
+      return {
+        id,
+        firstName: String(item.firstName ?? "").trim(),
+        lastName: String(item.lastName ?? "").trim(),
+        course: String(item.course ?? "").trim(),
+        institute: String(item.institute ?? "").trim(),
+        email,
+        createdAt,
+      } satisfies LocalProfileRecord;
+    })
+    .filter((item) => item.email.length > 0);
+
+  return normalized;
 }
 
-function writeAccounts(accounts: LocalAccountRecord[]) {
+function writeProfiles(profiles: LocalProfileRecord[]) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(accounts));
-  window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
-}
-
-function setSession(accountId: string) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(AUTH_SESSION_KEY, accountId);
-  window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
-}
-
-function clearSession() {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(AUTH_SESSION_KEY);
-  window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
+  localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(profiles));
+  dispatchAuthChanged();
 }
 
 function sanitizeOwnerEmails(raw: string[]): string[] {
@@ -174,8 +203,10 @@ function sanitizeAdminEmails(raw: string[], owners: string[]): string[] {
     ) {
       continue;
     }
+
     seen.add(email);
     normalized.push(email);
+
     if (normalized.length >= MAX_ADMINS) break;
   }
 
@@ -184,6 +215,7 @@ function sanitizeAdminEmails(raw: string[], owners: string[]): string[] {
 
 function readAdminEmails(): string[] {
   if (typeof window === "undefined") return [];
+
   const owners = readOwnerEmails();
   const raw = safeParse<string[]>(
     localStorage.getItem(AUTH_ADMIN_EMAILS_KEY),
@@ -202,7 +234,7 @@ function writeAdminEmails(emails: string[]) {
   if (typeof window === "undefined") return;
   const normalized = sanitizeAdminEmails(emails, readOwnerEmails());
   localStorage.setItem(AUTH_ADMIN_EMAILS_KEY, JSON.stringify(normalized));
-  window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
+  dispatchAuthChanged();
 }
 
 function writeOwnerEmails(emails: string[]) {
@@ -218,7 +250,7 @@ function writeOwnerEmails(emails: string[]) {
   const sanitizedAdmins = sanitizeAdminEmails(admins, owners);
   localStorage.setItem(AUTH_ADMIN_EMAILS_KEY, JSON.stringify(sanitizedAdmins));
 
-  window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
+  dispatchAuthChanged();
 }
 
 export function getOwnerEmails(): string[] {
@@ -247,7 +279,7 @@ export function getUserRole(email: string | null | undefined): UserRole {
   return "user";
 }
 
-function toAdminRecord(account: LocalAccountRecord): AdminAccountRecord {
+function toAdminRecord(account: LocalProfileRecord): AdminAccountRecord {
   return {
     id: account.id,
     firstName: account.firstName,
@@ -260,7 +292,7 @@ function toAdminRecord(account: LocalAccountRecord): AdminAccountRecord {
 }
 
 export function getAllUsersForAdmin(): AdminAccountRecord[] {
-  return readAccounts()
+  return readProfiles()
     .map(toAdminRecord)
     .sort((a, b) =>
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
@@ -278,15 +310,97 @@ function hasCompleteProfile(user: AuthUser | null): boolean {
   ].every((value) => value.trim().length > 0);
 }
 
-function toAuthUser(account: LocalAccountRecord): AuthUser {
+function toAuthUser(profile: LocalProfileRecord): AuthUser {
   return {
-    id: account.id,
-    firstName: account.firstName,
-    lastName: account.lastName,
-    course: account.course,
-    institute: account.institute,
-    email: account.email,
+    id: profile.id,
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    course: profile.course,
+    institute: profile.institute,
+    email: profile.email,
   };
+}
+
+function inferAuthErrorMessage(error: unknown, fallback: string): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const message = raw.toLowerCase();
+
+  if (message.includes("email not confirmed") || message.includes("email not verified")) {
+    return "Please verify your email before logging in.";
+  }
+  if (message.includes("invalid login credentials")) {
+    return "Incorrect email or password.";
+  }
+  if (message.includes("user already registered")) {
+    return "An account with this email already exists.";
+  }
+  if (message.includes("captcha")) {
+    return "CAPTCHA validation failed. Please try again.";
+  }
+  if (message.includes("failed to fetch") || message.includes("network") || message.includes("fetch")) {
+    return "Network error: unable to reach authentication server. Check your internet connection and SUPABASE_URL.";
+  }
+  if (message.includes("password") && message.includes("6")) {
+    return "Password must be at least 6 characters.";
+  }
+
+  return raw || fallback;
+}
+
+function validEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(email);
+}
+
+function getBaseUrl() {
+  if (typeof window !== "undefined") return window.location.origin;
+  const fromEnv = import.meta.env.VITE_SITE_URL;
+  return typeof fromEnv === "string" ? fromEnv : "";
+}
+
+function mergeProfileFromUser(existing: LocalProfileRecord | null, authUser: User): LocalProfileRecord {
+  const normalizedEmail = normalizeEmail(authUser.email ?? "");
+
+  return {
+    id: existing?.id ?? authUser.id,
+    firstName: existing?.firstName ?? "",
+    lastName: existing?.lastName ?? "",
+    course: existing?.course ?? "",
+    institute: existing?.institute ?? "",
+    email: normalizedEmail,
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+  };
+}
+
+function upsertProfile(record: LocalProfileRecord): LocalProfileRecord {
+  const profiles = readProfiles();
+  const idx = profiles.findIndex(
+    (item) => item.id === record.id || item.email === record.email,
+  );
+
+  if (idx === -1) {
+    writeProfiles([record, ...profiles]);
+    return record;
+  }
+
+  const merged: LocalProfileRecord = {
+    ...profiles[idx],
+    ...record,
+    id: profiles[idx].id || record.id,
+    createdAt: profiles[idx].createdAt || record.createdAt,
+  };
+
+  const next = [...profiles];
+  next[idx] = merged;
+  writeProfiles(next);
+  return merged;
+}
+
+function ensureRegisteredEmail(email: string) {
+  const normalized = normalizeEmail(email);
+  const exists = readProfiles().some((account) => account.email === normalized);
+  if (!exists) {
+    throw new Error("Only registered users can be granted elevated access.");
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -294,71 +408,97 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const hydrate = () => {
-      if (typeof window === "undefined") return;
+    let mounted = true;
 
-      const accounts = readAccounts();
-      const sessionId = localStorage.getItem(AUTH_SESSION_KEY);
+    const hydrateFromSupabaseUser = async (supabaseUser: User | null) => {
+      if (!mounted) return;
 
-      if (sessionId) {
-        const account = accounts.find((acc) => acc.id === sessionId) ?? null;
-        if (account) {
-          setUser(toAuthUser(account));
-        } else {
-          clearSession();
-          setUser(null);
-        }
-      } else {
+      if (!supabaseUser || !supabaseUser.email) {
         setUser(null);
+        setLoading(false);
+        return;
       }
 
-      setLoading(false);
-    };
+      if (!supabaseUser.email_confirmed_at) {
+        await supabase.auth.signOut();
+        setUser(null);
+        setLoading(false);
+        return;
+      }
 
-    hydrate();
+      const profiles = readProfiles();
+      const existing =
+        profiles.find((item) => item.id === supabaseUser.id) ??
+        profiles.find((item) => item.email === normalizeEmail(supabaseUser.email ?? "")) ??
+        null;
 
-    const onStorage = (e: StorageEvent) => {
-      if (
-        e.key === null ||
-        e.key === AUTH_SESSION_KEY ||
-        e.key === AUTH_ACCOUNTS_KEY ||
-        e.key === AUTH_ADMIN_EMAILS_KEY ||
-        e.key === AUTH_OWNER_EMAILS_KEY
-      ) {
-        hydrate();
+      const mergedProfile = mergeProfileFromUser(existing, supabaseUser);
+      const persistedProfile = upsertProfile(mergedProfile);
+
+      if (mounted) {
+        setUser(toAuthUser(persistedProfile));
+        setLoading(false);
       }
     };
 
-    const onAuthChanged = () => hydrate();
+    const hydrate = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error) {
+          setUser(null);
+          return;
+        }
+        await hydrateFromSupabaseUser(data.user ?? null);
+      } catch {
+        setUser(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
 
-    window.addEventListener("storage", onStorage);
-    window.addEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
+    void hydrate();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      void hydrateFromSupabaseUser(session?.user ?? null);
+    });
+
     return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
+      mounted = false;
+      subscription.unsubscribe();
     };
   }, []);
 
-  const signInWithPassword = async (email: string, password: string) => {
-    if (typeof window === "undefined") return;
-
+  const signInWithPassword = async (
+    email: string,
+    password: string,
+    captchaToken?: string,
+  ) => {
     const normalizedEmail = normalizeEmail(email);
-    const account = readAccounts().find((a) => a.email === normalizedEmail);
 
-    if (!account) {
-      throw new Error("No account found for this email.");
+    if (!normalizedEmail || !password) {
+      throw new Error("Email and password are required.");
     }
-    if (account.password !== password) {
-      throw new Error("Incorrect password.");
+    if (!validEmail(normalizedEmail)) {
+      throw new Error("Please enter a valid email address.");
+    }
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    });
+
+    if (error) {
+      throw new Error(inferAuthErrorMessage(error, "Could not sign in."));
     }
 
-    setSession(account.id);
-    setUser(toAuthUser(account));
+    if (!data.user?.email_confirmed_at) {
+      await supabase.auth.signOut();
+      throw new Error("Please verify your email before logging in.");
+    }
   };
 
-  const register = async (input: RegisterInput) => {
-    if (typeof window === "undefined") return;
-
+  const register = async (input: RegisterInput, captchaToken?: string) => {
     const firstName = input.firstName.trim();
     const lastName = input.lastName.trim();
     const course = input.course.trim();
@@ -369,26 +509,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!firstName || !lastName || !course || !institute || !email || !password) {
       throw new Error("Please fill all fields.");
     }
-
-    const accounts = readAccounts();
-    if (accounts.some((acc) => acc.email === email)) {
-      throw new Error("An account with this email already exists.");
+    if (!validEmail(email)) {
+      throw new Error("Please enter a valid email address.");
     }
+    if (password.length < 6) {
+      throw new Error("Password must be at least 6 characters.");
+    }
+    // captchaToken is optional when CAPTCHA is removed from the UI
 
-    const next: LocalAccountRecord = {
+    const profileSeed: LocalProfileRecord = {
       id: makeId(),
       firstName,
       lastName,
       course,
       institute,
       email,
-      password,
       createdAt: new Date().toISOString(),
     };
+    upsertProfile(profileSeed);
 
-    writeAccounts([next, ...accounts]);
-    setSession(next.id);
-    setUser(toAuthUser(next));
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: `${getBaseUrl()}/login`,
+      },
+    });
+
+    if (error) {
+      throw new Error(inferAuthErrorMessage(error, "Could not create account."));
+    }
+
+    await supabase.auth.signOut();
   };
 
   const updateProfile = async (input: ProfileUpdateInput) => {
@@ -407,45 +559,102 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("Please fill all profile fields.");
     }
 
-    const accounts = readAccounts();
-    const idx = accounts.findIndex((account) => account.id === user.id);
-    if (idx === -1) {
-      throw new Error("Could not find your account.");
-    }
-
-    const updatedAccount: LocalAccountRecord = {
-      ...accounts[idx],
-      firstName: profile.firstName,
-      lastName: profile.lastName,
-      course: profile.course,
-      institute: profile.institute,
+    const existing = readProfiles().find((record) => record.id === user.id) ?? {
+      id: user.id,
+      firstName: "",
+      lastName: "",
+      course: "",
+      institute: "",
+      email: normalizeEmail(user.email),
+      createdAt: new Date().toISOString(),
     };
 
-    const nextAccounts = [...accounts];
-    nextAccounts[idx] = updatedAccount;
-    writeAccounts(nextAccounts);
+    const next = upsertProfile({
+      ...existing,
+      ...profile,
+      email: normalizeEmail(user.email),
+    });
 
-    setUser(toAuthUser(updatedAccount));
+    setUser(toAuthUser(next));
   };
 
-  const resetPassword = async (email: string, newPassword: string) => {
-    if (typeof window === "undefined") return;
-
+  const resetPassword = async (email: string) => {
     const normalizedEmail = normalizeEmail(email);
-    const password = newPassword;
-
-    if (!normalizedEmail || !password) {
-      throw new Error("Email and new password are required.");
+    if (!normalizedEmail) {
+      throw new Error("Email is required.");
+    }
+    if (!validEmail(normalizedEmail)) {
+      throw new Error("Please enter a valid email address.");
     }
 
-    const accounts = readAccounts();
-    const idx = accounts.findIndex((acc) => acc.email === normalizedEmail);
-    if (idx === -1) {
-      throw new Error("No account found for this email.");
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+      redirectTo: `${getBaseUrl()}/login`,
+    });
+
+    if (error) {
+      throw new Error(inferAuthErrorMessage(error, "Could not send reset email."));
+    }
+  };
+
+  const completePasswordReset = async (newPassword: string) => {
+    if (newPassword.trim().length < 6) {
+      throw new Error("Password must be at least 6 characters.");
     }
 
-    accounts[idx] = { ...accounts[idx], password };
-    writeAccounts(accounts);
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (error) {
+      throw new Error(inferAuthErrorMessage(error, "Could not update password."));
+    }
+  };
+
+  const updatePassword = async (newPassword: string) => {
+    if (!user) {
+      throw new Error("You must be signed in to change password.");
+    }
+
+    await completePasswordReset(newPassword);
+  };
+
+  const changeEmail = async (newEmail: string) => {
+    if (!user) {
+      throw new Error("You must be signed in to change email.");
+    }
+
+    const normalizedEmail = normalizeEmail(newEmail);
+    if (!normalizedEmail) {
+      throw new Error("Email is required.");
+    }
+    if (!validEmail(normalizedEmail)) {
+      throw new Error("Please enter a valid email address.");
+    }
+    if (normalizedEmail === normalizeEmail(user.email)) {
+      throw new Error("New email is the same as your current email.");
+    }
+
+    const { error } = await supabase.auth.updateUser(
+      { email: normalizedEmail },
+      { emailRedirectTo: `${getBaseUrl()}/profile` },
+    );
+
+    if (error) {
+      throw new Error(inferAuthErrorMessage(error, "Could not start email update."));
+    }
+
+    upsertProfile({
+      ...(readProfiles().find((record) => record.id === user.id) ?? {
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        course: user.course,
+        institute: user.institute,
+        email: normalizeEmail(user.email),
+        createdAt: new Date().toISOString(),
+      }),
+      email: normalizeEmail(user.email),
+    });
   };
 
   const grantAdminAccess = async (email: string) => {
@@ -464,10 +673,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("Owner already has full access.");
     }
 
-    const accounts = readAccounts();
-    if (!accounts.some((account) => account.email === normalized)) {
-      throw new Error("Only registered users can be granted admin access.");
-    }
+    ensureRegisteredEmail(normalized);
 
     if (normalized === SYSTEM_ADMIN_EMAIL) {
       return;
@@ -497,10 +703,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("Please provide a valid email address.");
     }
 
-    const accounts = readAccounts();
-    if (!accounts.some((account) => account.email === normalized)) {
-      throw new Error("Only registered users can be granted owner access.");
-    }
+    ensureRegisteredEmail(normalized);
 
     const owners = readOwnerEmails();
     if (owners.includes(normalized)) {
@@ -560,8 +763,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
-    if (typeof window === "undefined") return;
-    clearSession();
+    await supabase.auth.signOut();
     setUser(null);
   };
 
@@ -573,43 +775,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const adminEmails = [SYSTEM_ADMIN_EMAIL, ...managedAdminEmails];
   const isProfileComplete = hasCompleteProfile(user);
 
-  return (
-    <Ctx.Provider
-      value={{
-        user,
-        loading,
-        role,
-        isOwner,
-        isAdmin,
-        ownerEmails,
-        adminEmails,
-        managedAdminEmails,
-        isProfileComplete,
-        signInWithPassword,
-        register,
-        updateProfile,
-        resetPassword,
-        grantOwnerAccess,
-        revokeOwnerAccess,
-        grantAdminAccess,
-        revokeAdminAccess,
-        signOut,
-      }}
-    >
-      {children}
-    </Ctx.Provider>
+  const value = useMemo<AuthCtx>(
+    () => ({
+      user,
+      loading,
+      role,
+      isOwner,
+      isAdmin,
+      ownerEmails,
+      adminEmails,
+      managedAdminEmails,
+      isProfileComplete,
+      signInWithPassword,
+      register,
+      updateProfile,
+      resetPassword,
+      completePasswordReset,
+      updatePassword,
+      changeEmail,
+      grantOwnerAccess,
+      revokeOwnerAccess,
+      grantAdminAccess,
+      revokeAdminAccess,
+      signOut,
+    }),
+    [
+      user,
+      loading,
+      role,
+      isOwner,
+      isAdmin,
+      ownerEmails,
+      adminEmails,
+      managedAdminEmails,
+      isProfileComplete,
+    ],
   );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useAuth() {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
-}
-
-function makeId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }

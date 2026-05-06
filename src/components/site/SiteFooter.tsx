@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Mail, Phone, Linkedin, Instagram } from "lucide-react";
+import { Mail, Linkedin, Instagram } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
 import logo from "@/assets/lexora-logo.jpg";
 import { useAuth } from "@/hooks/useAuth";
@@ -66,11 +66,13 @@ export function SiteFooter() {
       <div className="mx-auto grid max-w-7xl gap-12 px-6 py-16 md:grid-cols-4">
         <div className="md:col-span-2">
           <div className="flex items-center gap-3">
-            <img
-              src={logo}
-              alt="Lexora"
-              className="h-12 w-12 rounded-full ring-1 ring-gold/50"
-            />
+            <div className="h-12 w-12 overflow-hidden rounded-full ring-1 ring-gold/50">
+              <img
+                src={logo}
+                alt="Lexora"
+                className="h-full w-full scale-[1.14] object-cover"
+              />
+            </div>
             <div>
               <p className="font-display text-2xl">Lexora Community</p>
               <p className="text-xs uppercase tracking-[0.25em] text-gold">
@@ -119,19 +121,21 @@ export function SiteFooter() {
           <ul className="mt-4 space-y-3 text-sm text-primary-foreground/75">
             <li className="flex items-center gap-2">
               <Mail className="h-4 w-4 text-gold" />
-              <span>{contact.email}</span>
+              <a href={`mailto:${contact.email}`} className="block hover:text-gold">
+                {contact.email}
+              </a>
             </li>
             <li className="flex items-center gap-2">
-              <Phone className="h-4 w-4 text-gold" />
-              <span>
-                {contact.phonePrimaryLabel} - {contact.phonePrimaryNumber}
-              </span>
+              <Mail className="h-4 w-4 text-gold" />
+              <a href={`mailto:${contact.secondaryEmail}`} className="block hover:text-gold">
+                {contact.secondaryEmailLabel} - {contact.secondaryEmail}
+              </a>
             </li>
             <li className="flex items-center gap-2">
-              <Phone className="h-4 w-4 text-gold" />
-              <span>
-                {contact.phoneSecondaryLabel} - {contact.phoneSecondaryNumber}
-              </span>
+              <Mail className="h-4 w-4 text-gold" />
+              <a href={`mailto:${contact.tertiaryEmail}`} className="block hover:text-gold">
+                {contact.tertiaryEmailLabel} - {contact.tertiaryEmail}
+              </a>
             </li>
             <li className="flex gap-3 pt-2">
               <a

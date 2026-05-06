@@ -70,10 +70,10 @@ export interface HomeHeroContent {
 
 export interface ContactDetailsContent {
   email: string;
-  phonePrimaryLabel: string;
-  phonePrimaryNumber: string;
-  phoneSecondaryLabel: string;
-  phoneSecondaryNumber: string;
+  secondaryEmailLabel: string;
+  secondaryEmail: string;
+  tertiaryEmailLabel: string;
+  tertiaryEmail: string;
   linkedInUrl: string;
   linkedInLabel: string;
   instagramUrl: string;
@@ -143,11 +143,11 @@ export const HOME_HERO_DEFAULTS: HomeHeroContent = {
 };
 
 export const CONTACT_DETAILS_DEFAULTS: ContactDetailsContent = {
-  email: "lexora.comm@gmail.com",
-  phonePrimaryLabel: "Anadi Sahu",
-  phonePrimaryNumber: "+91 99264 02817",
-  phoneSecondaryLabel: "Mohith Reddy",
-  phoneSecondaryNumber: "+91 86888 97127",
+  email: "lexora.community@gmail.com",
+  secondaryEmailLabel: "Anadi Sahu",
+  secondaryEmail: "anadisahu9926@gmail.com",
+  tertiaryEmailLabel: "Mohith Reddy",
+  tertiaryEmail: "mohithofficial8@gmail.com",
   linkedInUrl: "https://www.linkedin.com/company/lexora-community/",
   linkedInLabel: "Lexora Community",
   instagramUrl: "https://instagram.com",
@@ -316,14 +316,14 @@ export function getContactDetails(
 
   return {
     email: cleanText(override.email) || fallback.email,
-    phonePrimaryLabel:
-      cleanText(override.phonePrimaryLabel) || fallback.phonePrimaryLabel,
-    phonePrimaryNumber:
-      cleanText(override.phonePrimaryNumber) || fallback.phonePrimaryNumber,
-    phoneSecondaryLabel:
-      cleanText(override.phoneSecondaryLabel) || fallback.phoneSecondaryLabel,
-    phoneSecondaryNumber:
-      cleanText(override.phoneSecondaryNumber) || fallback.phoneSecondaryNumber,
+    secondaryEmailLabel:
+      cleanText(override.secondaryEmailLabel) || fallback.secondaryEmailLabel,
+    secondaryEmail:
+      cleanText(override.secondaryEmail) || fallback.secondaryEmail,
+    tertiaryEmailLabel:
+      cleanText(override.tertiaryEmailLabel) || fallback.tertiaryEmailLabel,
+    tertiaryEmail:
+      cleanText(override.tertiaryEmail) || fallback.tertiaryEmail,
     linkedInUrl: cleanText(override.linkedInUrl) || fallback.linkedInUrl,
     linkedInLabel: cleanText(override.linkedInLabel) || fallback.linkedInLabel,
     instagramUrl: cleanText(override.instagramUrl) || fallback.instagramUrl,
@@ -336,18 +336,18 @@ export function setContactDetails(content: ContactDetailsContent) {
   const store = readStore();
   const contactDetails: ContactDetailsContent = {
     email: cleanText(content.email) || CONTACT_DETAILS_DEFAULTS.email,
-    phonePrimaryLabel:
-      cleanText(content.phonePrimaryLabel) ||
-      CONTACT_DETAILS_DEFAULTS.phonePrimaryLabel,
-    phonePrimaryNumber:
-      cleanText(content.phonePrimaryNumber) ||
-      CONTACT_DETAILS_DEFAULTS.phonePrimaryNumber,
-    phoneSecondaryLabel:
-      cleanText(content.phoneSecondaryLabel) ||
-      CONTACT_DETAILS_DEFAULTS.phoneSecondaryLabel,
-    phoneSecondaryNumber:
-      cleanText(content.phoneSecondaryNumber) ||
-      CONTACT_DETAILS_DEFAULTS.phoneSecondaryNumber,
+    secondaryEmailLabel:
+      cleanText(content.secondaryEmailLabel) ||
+      CONTACT_DETAILS_DEFAULTS.secondaryEmailLabel,
+    secondaryEmail:
+      cleanText(content.secondaryEmail) ||
+      CONTACT_DETAILS_DEFAULTS.secondaryEmail,
+    tertiaryEmailLabel:
+      cleanText(content.tertiaryEmailLabel) ||
+      CONTACT_DETAILS_DEFAULTS.tertiaryEmailLabel,
+    tertiaryEmail:
+      cleanText(content.tertiaryEmail) ||
+      CONTACT_DETAILS_DEFAULTS.tertiaryEmail,
     linkedInUrl:
       cleanText(content.linkedInUrl) || CONTACT_DETAILS_DEFAULTS.linkedInUrl,
     linkedInLabel:

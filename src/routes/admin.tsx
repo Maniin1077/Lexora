@@ -613,6 +613,24 @@ function AdminPage() {
     setNavForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const updateHomeImageFromFile = (file: File | null) => {
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please choose an image file.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result) return;
+      setHomeForm((prev) => ({ ...prev, image: result }));
+    };
+    reader.onerror = () => toast.error("Could not read image file.");
+    reader.readAsDataURL(file);
+  };
+
   const saveNavigation = () => {
     try {
       setSavingNavigation(true);
@@ -981,7 +999,10 @@ function AdminPage() {
                 <input
                   value={homeForm.titleLineOne}
                   onChange={(event) =>
-                    setHomeForm((prev) => ({ ...prev, titleLineOne: event.target.value }))
+                    setHomeForm((prev) => ({
+                      ...prev,
+                      titleLineOne: event.target.value,
+                    }))
                   }
                   className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
                 />
@@ -991,7 +1012,10 @@ function AdminPage() {
                 <input
                   value={homeForm.titleAccent}
                   onChange={(event) =>
-                    setHomeForm((prev) => ({ ...prev, titleAccent: event.target.value }))
+                    setHomeForm((prev) => ({
+                      ...prev,
+                      titleAccent: event.target.value,
+                    }))
                   }
                   className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
                 />
@@ -1001,7 +1025,10 @@ function AdminPage() {
                 <textarea
                   value={homeForm.description}
                   onChange={(event) =>
-                    setHomeForm((prev) => ({ ...prev, description: event.target.value }))
+                    setHomeForm((prev) => ({
+                      ...prev,
+                      description: event.target.value,
+                    }))
                   }
                   rows={3}
                   className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
@@ -1012,7 +1039,10 @@ function AdminPage() {
                 <input
                   value={homeForm.primaryCtaText}
                   onChange={(event) =>
-                    setHomeForm((prev) => ({ ...prev, primaryCtaText: event.target.value }))
+                    setHomeForm((prev) => ({
+                      ...prev,
+                      primaryCtaText: event.target.value,
+                    }))
                   }
                   className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
                 />
@@ -1022,26 +1052,42 @@ function AdminPage() {
                 <input
                   value={homeForm.secondaryCtaText}
                   onChange={(event) =>
-                    setHomeForm((prev) => ({ ...prev, secondaryCtaText: event.target.value }))
+                    setHomeForm((prev) => ({
+                      ...prev,
+                      secondaryCtaText: event.target.value,
+                    }))
                   }
                   className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
                 />
               </label>
               <label className="block text-xs uppercase tracking-wide text-muted-foreground md:col-span-2">
-                Hero image URL or data URL
-                <div className="mt-1 flex gap-2">
-                  <div className="mt-2 text-muted-foreground">
-                    <ImageIcon className="h-4 w-4" />
-                  </div>
+                Hero image
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary mt-2">
+                  Choose image file
                   <input
-                    value={homeForm.image}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
                     onChange={(event) =>
-                      setHomeForm((prev) => ({ ...prev, image: event.target.value }))
+                      updateHomeImageFromFile(event.target.files?.[0] ?? null)
                     }
-                    className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
                   />
-                </div>
+                </label>
               </label>
+              {homeForm.image && (
+                <div className="md:col-span-2 rounded-lg border border-border bg-background p-3">
+                  <p className="text-xs text-muted-foreground mb-2">Preview</p>
+                  <div className="flex justify-center">
+                    <div className="h-32 w-32 overflow-hidden rounded-lg ring-1 ring-gold/30">
+                      <img
+                        src={homeForm.image}
+                        alt="Home hero preview"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
@@ -1112,7 +1158,7 @@ function AdminPage() {
 
               <div className="mt-3 grid gap-3">
                 <label className="block text-xs uppercase tracking-wide text-muted-foreground">
-                  Email
+                  Primary email
                   <input
                     value={contactForm.email}
                     onChange={(event) => updateContactField("email", event.target.value)}
@@ -1122,22 +1168,20 @@ function AdminPage() {
 
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="block text-xs uppercase tracking-wide text-muted-foreground">
-                    Primary phone label
+                    Secondary email name
                     <input
-                      value={contactForm.phonePrimaryLabel}
+                      value={contactForm.secondaryEmailLabel}
                       onChange={(event) =>
-                        updateContactField("phonePrimaryLabel", event.target.value)
+                        updateContactField("secondaryEmailLabel", event.target.value)
                       }
                       className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
                     />
                   </label>
                   <label className="block text-xs uppercase tracking-wide text-muted-foreground">
-                    Primary phone number
+                    Secondary email
                     <input
-                      value={contactForm.phonePrimaryNumber}
-                      onChange={(event) =>
-                        updateContactField("phonePrimaryNumber", event.target.value)
-                      }
+                      value={contactForm.secondaryEmail}
+                      onChange={(event) => updateContactField("secondaryEmail", event.target.value)}
                       className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
                     />
                   </label>
@@ -1145,22 +1189,20 @@ function AdminPage() {
 
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="block text-xs uppercase tracking-wide text-muted-foreground">
-                    Secondary phone label
+                    Tertiary email name
                     <input
-                      value={contactForm.phoneSecondaryLabel}
+                      value={contactForm.tertiaryEmailLabel}
                       onChange={(event) =>
-                        updateContactField("phoneSecondaryLabel", event.target.value)
+                        updateContactField("tertiaryEmailLabel", event.target.value)
                       }
                       className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
                     />
                   </label>
                   <label className="block text-xs uppercase tracking-wide text-muted-foreground">
-                    Secondary phone number
+                    Tertiary email
                     <input
-                      value={contactForm.phoneSecondaryNumber}
-                      onChange={(event) =>
-                        updateContactField("phoneSecondaryNumber", event.target.value)
-                      }
+                      value={contactForm.tertiaryEmail}
+                      onChange={(event) => updateContactField("tertiaryEmail", event.target.value)}
                       className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-gold/70"
                     />
                   </label>
