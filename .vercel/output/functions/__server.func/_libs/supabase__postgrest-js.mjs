@@ -68,7 +68,7 @@ var PostgrestBuilder = class {
   * ```ts
   * import { createClient } from '@supabase/supabase-js'
   *
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
   * const { data, error } = await supabase.from('users').select('*')
   * ```
   *
@@ -80,7 +80,7 @@ var PostgrestBuilder = class {
   *
   * const builder = new PostgrestQueryBuilder(
   *   new URL('https://xyzcompany.supabase.co/rest/v1/users'),
-  *   { headers: new Headers({ apikey: 'publishable-or-anon-key' }) }
+  *   { headers: new Headers({ apikey: 'your-publishable-key' }) }
   * )
   * ```
   */
@@ -123,6 +123,7 @@ var PostgrestBuilder = class {
   * {@link https://docs.postgrest.org/en/stable/references/api/resource_representation.html#stripped-nulls}
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @example With `select()`
   * ```ts
@@ -228,7 +229,7 @@ var PostgrestBuilder = class {
             signal: _this.signal
           });
         } catch (fetchError) {
-          if ((fetchError === null || fetchError === void 0 ? void 0 : fetchError.name) === "AbortError" || (fetchError === null || fetchError === void 0 ? void 0 : fetchError.code) === "ABORT_ERR") throw fetchError;
+          if (fetchError instanceof Error && (fetchError.name === "AbortError" || "code" in fetchError && fetchError.code === "ABORT_ERR")) throw fetchError;
           if (!RETRYABLE_METHODS.includes(_this.method)) throw fetchError;
           if (_this.retryEnabled && attemptCount < DEFAULT_MAX_RETRIES) {
             const delay = getRetryDelay(attemptCount);
@@ -395,6 +396,7 @@ ${cause.stack}`;
   * @returns A PostgrestBuilder instance with the new type
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @example Complete Override type of successful response
   * ```ts
@@ -450,7 +452,7 @@ ${cause.stack}`;
   * let x: typeof data // CountryRowProperties & { status: "A" | "B" } | null
   * ```
   *
-  * @example Example 5
+  * @example Merge vs replace existing types
   * ```typescript
   * // Merge with existing types (default behavior)
   * const query = supabase
@@ -480,6 +482,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * @param columns - The columns to retrieve, separated by commas
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @example With `upsert()`
   * ```ts
@@ -544,6 +547,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * instead
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @example With `select()`
   * ```ts
@@ -730,6 +734,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * instead
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @example With `select()`
   * ```ts
@@ -839,6 +844,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * instead
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @example With `select()`
   * ```ts
@@ -890,6 +896,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * @param signal - The AbortSignal to use for the fetch request
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @remarks
   * You can use this to set a timeout for the request.
@@ -960,6 +967,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * returns an error.
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @example With `select()`
   * ```ts
@@ -1005,6 +1013,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * this returns an error.
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @example With `select()`
   * ```ts
@@ -1044,6 +1053,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * Return `data` as a string in CSV format.
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @exampleDescription Return data as CSV
   * By default, the data is returned in JSON format, but can also be returned as Comma Separated Values.
@@ -1117,6 +1127,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * or `"json"`
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @exampleDescription Get the execution plan
   * By default, the data is returned in TEXT format, but can also be returned as JSON by using the `format` parameter.
@@ -1218,6 +1229,7 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * @deprecated Use overrideTypes<yourType, { merge: false }>() method at the end of your call chain instead
   *
   * @category Database
+  * @subcategory Using modifiers
   *
   * @remarks
   * - Deprecated: use overrideTypes method instead
@@ -1277,6 +1289,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example With `select()`
   * ```ts
@@ -1324,6 +1337,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example With `select()`
   * ```ts
@@ -1375,6 +1389,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @exampleDescription With `select()`
   * When using [reserved words](https://www.postgresql.org/docs/current/sql-keywords-appendix.html) for column names you need
@@ -1426,6 +1441,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example With `select()`
   * ```ts
@@ -1477,6 +1493,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example With `select()`
   * ```ts
@@ -1524,6 +1541,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example With `select()`
   * ```ts
@@ -1575,6 +1593,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param pattern - The pattern to match with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example With `select()`
   * ```ts
@@ -1622,6 +1641,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param patterns - The patterns to match with
   *
   * @category Database
+  * @subcategory Using filters
   */
   likeAllOf(column, patterns) {
     this.url.searchParams.append(column, `like(all).{${patterns.join(",")}}`);
@@ -1634,6 +1654,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param patterns - The patterns to match with
   *
   * @category Database
+  * @subcategory Using filters
   */
   likeAnyOf(column, patterns) {
     this.url.searchParams.append(column, `like(any).{${patterns.join(",")}}`);
@@ -1646,6 +1667,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param pattern - The pattern to match with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example With `select()`
   * ```ts
@@ -1693,6 +1715,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param patterns - The patterns to match with
   *
   * @category Database
+  * @subcategory Using filters
   */
   ilikeAllOf(column, patterns) {
     this.url.searchParams.append(column, `ilike(all).{${patterns.join(",")}}`);
@@ -1705,6 +1728,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param patterns - The patterns to match with
   *
   * @category Database
+  * @subcategory Using filters
   */
   ilikeAnyOf(column, patterns) {
     this.url.searchParams.append(column, `ilike(any).{${patterns.join(",")}}`);
@@ -1745,6 +1769,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @exampleDescription Checking for nullness, true or false
   * Using the `eq()` filter doesn't work when filtering for `null`.
@@ -1810,6 +1835,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param values - The values array to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example With `select()`
   * ```ts
@@ -1880,6 +1906,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The jsonb, array, or range value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example On array columns
   * ```ts
@@ -2014,6 +2041,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The jsonb, array, or range value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example On array columns
   * ```ts
@@ -2149,6 +2177,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param range - The range to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @exampleDescription With `select()`
   * Postgres supports a number of [range
@@ -2209,6 +2238,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param range - The range to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @exampleDescription With `select()`
   * Postgres supports a number of [range
@@ -2268,6 +2298,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param range - The range to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @exampleDescription With `select()`
   * Postgres supports a number of [range
@@ -2327,6 +2358,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param range - The range to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @exampleDescription With `select()`
   * Postgres supports a number of [range
@@ -2387,6 +2419,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param range - The range to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @exampleDescription With `select()`
   * Postgres supports a number of [range
@@ -2445,6 +2478,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The array or range value to filter with
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example On array columns
   * ```ts
@@ -2544,6 +2578,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param options.type - Change how the `query` text is interpreted
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @remarks
   * - For more information, see [Postgres full text search](/docs/guides/database/full-text-search).
@@ -2653,6 +2688,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * to their filter values
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @example With `select()`
   * ```ts
@@ -2708,6 +2744,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The value to filter with, following PostgREST syntax
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @remarks
   * not() expects you to use the raw PostgREST syntax for the filter values.
@@ -2772,6 +2809,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param options.foreignTable - Deprecated, use `referencedTable` instead
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @remarks
   * or() expects you to use the raw PostgREST syntax for the filter names and values.
@@ -2925,6 +2963,7 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
   * @param value - The value to filter with, following PostgREST syntax
   *
   * @category Database
+  * @subcategory Using filters
   *
   * @remarks
   * filter() expects you to use the raw PostgREST syntax for the filter values.
@@ -3046,7 +3085,7 @@ var PostgrestQueryBuilder = class {
   * ```ts
   * import { createClient } from '@supabase/supabase-js'
   *
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
   * const { data, error } = await supabase.from('users').select('*')
   * ```
   *
@@ -3056,7 +3095,7 @@ var PostgrestQueryBuilder = class {
   *
   * const query = new PostgrestQueryBuilder(
   *   new URL('https://xyzcompany.supabase.co/rest/v1/users'),
-  *   { headers: { apikey: 'publishable-or-anon-key' }, retry: true }
+  *   { headers: { apikey: 'your-publishable-key' }, retry: true }
   * )
   * ```
   */
@@ -4606,7 +4645,7 @@ var PostgrestClient = class PostgrestClient2 {
   * ```ts
   * import { createClient } from '@supabase/supabase-js'
   *
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
   * const { data, error } = await supabase.from('profiles').select('*')
   * ```
   *
@@ -4621,7 +4660,7 @@ var PostgrestClient = class PostgrestClient2 {
   * import { PostgrestClient } from '@supabase/postgrest-js'
   *
   * const postgrest = new PostgrestClient('https://xyzcompany.supabase.co/rest/v1', {
-  *   headers: { apikey: 'publishable-or-anon-key' },
+  *   headers: { apikey: 'your-publishable-key' },
   *   schema: 'public',
   *   timeout: 30000, // 30 second timeout
   * })

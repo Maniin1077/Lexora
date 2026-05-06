@@ -3,7 +3,7 @@ import { R as RealtimeClient } from "./supabase__realtime-js.mjs";
 import { S as StorageClient } from "./supabase__storage-js.mjs";
 import { A as AuthClient } from "./supabase__auth-js.mjs";
 import { F as FunctionsClient } from "./supabase__functions-js.mjs";
-const version = "2.104.1";
+const version = "2.105.3";
 let JS_ENV = "";
 if (typeof Deno !== "undefined") JS_ENV = "deno";
 else if (typeof document !== "undefined") JS_ENV = "web";
@@ -145,7 +145,7 @@ var SupabaseClient = class {
   * import { createClient } from '@supabase/supabase-js'
   *
   * // Create a single supabase client for interacting with your database
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
   * ```
   *
   * @example With a custom domain
@@ -153,7 +153,7 @@ var SupabaseClient = class {
   * import { createClient } from '@supabase/supabase-js'
   *
   * // Use a custom domain as the supabase URL
-  * const supabase = createClient('https://my-custom-domain.com', 'publishable-or-anon-key')
+  * const supabase = createClient('https://my-custom-domain.com', 'your-publishable-key')
   * ```
   *
   * @example With additional parameters
@@ -173,7 +173,7 @@ var SupabaseClient = class {
   *     headers: { 'x-my-custom-header': 'my-app-name' },
   *   },
   * }
-  * const supabase = createClient("https://xyzcompany.supabase.co", "publishable-or-anon-key", options)
+  * const supabase = createClient("https://xyzcompany.supabase.co", "your-publishable-key", options)
   * ```
   *
   * @exampleDescription With custom schemas
@@ -186,7 +186,7 @@ var SupabaseClient = class {
   * ```js
   * import { createClient } from '@supabase/supabase-js'
   *
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key', {
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key', {
   *   // Provide a custom schema. Defaults to "public".
   *   db: { schema: 'other_schema' }
   * })
@@ -201,7 +201,7 @@ var SupabaseClient = class {
   * ```js
   * import { createClient } from '@supabase/supabase-js'
   *
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key', {
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key', {
   *   global: { fetch: fetch.bind(globalThis) }
   * })
   * ```
@@ -215,7 +215,7 @@ var SupabaseClient = class {
   * import { createClient } from '@supabase/supabase-js'
   * import AsyncStorage from "@react-native-async-storage/async-storage";
   *
-  * const supabase = createClient("https://xyzcompany.supabase.co", "publishable-or-anon-key", {
+  * const supabase = createClient("https://xyzcompany.supabase.co", "your-publishable-key", {
   *   auth: {
   *     storage: AsyncStorage,
   *     autoRefreshToken: true,
@@ -292,7 +292,7 @@ var SupabaseClient = class {
   *   }
   * }
   *
-  * const supabase = createClient("https://xyzcompany.supabase.co", "publishable-or-anon-key", {
+  * const supabase = createClient("https://xyzcompany.supabase.co", "your-publishable-key", {
   *   auth: {
   *     storage: new LargeSecureStore(),
   *     autoRefreshToken: true,
@@ -306,7 +306,7 @@ var SupabaseClient = class {
   * ```ts
   * import { createClient } from '@supabase/supabase-js'
   *
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
   *
   * const { data } = await supabase.from('profiles').select('*')
   * ```
@@ -421,6 +421,7 @@ var SupabaseClient = class {
   * @param {string} name - The name of the Realtime channel.
   * @param {Object} opts - The options to pass to the Realtime channel.
   *
+  * @category Realtime
   */
   channel(name, opts = { config: {} }) {
     return this.realtime.channel(name, opts);
@@ -428,7 +429,7 @@ var SupabaseClient = class {
   /**
   * Returns all Realtime channels.
   *
-  * @category Initializing
+  * @category Realtime
   *
   * @example Get all channels
   * ```js
@@ -444,7 +445,7 @@ var SupabaseClient = class {
   * @param {RealtimeChannel} channel - The name of the Realtime channel.
   *
   *
-  * @category Initializing
+  * @category Realtime
   *
   * @remarks
   * - Removing a channel is a great way to maintain the performance of your project's Realtime service as well as your database if you're listening to Postgres changes. Supabase will automatically handle cleanup 30 seconds after a client is disconnected, but unused channels may cause degradation as more clients are simultaneously subscribed.
@@ -460,7 +461,7 @@ var SupabaseClient = class {
   /**
   * Unsubscribes and removes all Realtime channels from Realtime client.
   *
-  * @category Initializing
+  * @category Realtime
   *
   * @remarks
   * - Removing channels is a great way to maintain the performance of your project's Realtime service as well as your database if you're listening to Postgres changes. Supabase will automatically handle cleanup 30 seconds after a client is disconnected, but unused channels may cause degradation as more clients are simultaneously subscribed.
@@ -480,7 +481,7 @@ var SupabaseClient = class {
     const { data } = await _this.auth.getSession();
     return (_data$session$access_ = (_data$session = data.session) === null || _data$session === void 0 ? void 0 : _data$session.access_token) !== null && _data$session$access_ !== void 0 ? _data$session$access_ : _this.supabaseKey;
   }
-  _initSupabaseAuthClient({ autoRefreshToken, persistSession, detectSessionInUrl, storage, userStorage, storageKey, flowType, lock, debug, throwOnError }, headers, fetch$1) {
+  _initSupabaseAuthClient({ autoRefreshToken, persistSession, detectSessionInUrl, storage, userStorage, storageKey, flowType, lock, debug, throwOnError, experimental, lockAcquireTimeout, skipAutoInitialize }, headers, fetch$1) {
     const authHeaders = {
       Authorization: `Bearer ${this.supabaseKey}`,
       apikey: `${this.supabaseKey}`
@@ -498,7 +499,10 @@ var SupabaseClient = class {
       lock,
       debug,
       throwOnError,
+      experimental,
       fetch: fetch$1,
+      lockAcquireTimeout,
+      skipAutoInitialize,
       hasCustomAuthorizationHeader: Object.keys(this.headers).some((key) => key.toLowerCase() === "authorization")
     });
   }

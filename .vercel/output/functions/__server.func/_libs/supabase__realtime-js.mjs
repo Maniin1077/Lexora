@@ -8,22 +8,24 @@ class WebSocketFactory {
   static detectEnvironment() {
     var _a;
     if (typeof WebSocket !== "undefined") {
-      return { type: "native", constructor: WebSocket };
+      return { type: "native", wsConstructor: WebSocket };
     }
-    if (typeof globalThis !== "undefined" && typeof globalThis.WebSocket !== "undefined") {
-      return { type: "native", constructor: globalThis.WebSocket };
+    const gt = globalThis;
+    if (typeof globalThis !== "undefined" && typeof gt.WebSocket !== "undefined") {
+      return { type: "native", wsConstructor: gt.WebSocket };
     }
-    if (typeof global !== "undefined" && typeof global.WebSocket !== "undefined") {
-      return { type: "native", constructor: global.WebSocket };
+    const gl = typeof global !== "undefined" ? global : void 0;
+    if (gl && typeof gl.WebSocket !== "undefined") {
+      return { type: "native", wsConstructor: gl.WebSocket };
     }
-    if (typeof globalThis !== "undefined" && typeof globalThis.WebSocketPair !== "undefined" && typeof globalThis.WebSocket === "undefined") {
+    if (typeof globalThis !== "undefined" && typeof gt.WebSocketPair !== "undefined" && typeof globalThis.WebSocket === "undefined") {
       return {
         type: "cloudflare",
         error: "Cloudflare Workers detected. WebSocket clients are not supported in Cloudflare Workers.",
         workaround: "Use Cloudflare Workers WebSocket API for server-side WebSocket handling, or deploy to a different runtime."
       };
     }
-    if (typeof globalThis !== "undefined" && globalThis.EdgeRuntime || typeof navigator !== "undefined" && ((_a = navigator.userAgent) === null || _a === void 0 ? void 0 : _a.includes("Vercel-Edge"))) {
+    if (typeof globalThis !== "undefined" && gt.EdgeRuntime || typeof navigator !== "undefined" && ((_a = navigator.userAgent) === null || _a === void 0 ? void 0 : _a.includes("Vercel-Edge"))) {
       return {
         type: "unsupported",
         error: "Edge runtime detected (Vercel Edge/Netlify Edge). WebSockets are not supported in edge functions.",
@@ -38,7 +40,7 @@ class WebSocketFactory {
         const nodeVersion = parseInt(versionString.replace(/^v/, "").split(".")[0]);
         if (nodeVersion >= 22) {
           if (typeof globalThis.WebSocket !== "undefined") {
-            return { type: "native", constructor: globalThis.WebSocket };
+            return { type: "native", wsConstructor: globalThis.WebSocket };
           }
           return {
             type: "unsupported",
@@ -76,8 +78,8 @@ class WebSocketFactory {
    */
   static getWebSocketConstructor() {
     const env = this.detectEnvironment();
-    if (env.constructor) {
-      return env.constructor;
+    if (env.wsConstructor) {
+      return env.wsConstructor;
     }
     let errorMessage = env.error || "WebSocket not supported in this environment.";
     if (env.workaround) {
@@ -109,7 +111,7 @@ Suggested solution: ${env.workaround}`;
     }
   }
 }
-const version = "2.104.1";
+const version = "2.105.3";
 const DEFAULT_VERSION = `realtime-js/${version}`;
 const VSN_1_0_0 = "1.0.0";
 const VSN_2_0_0 = "2.0.0";
@@ -554,6 +556,23 @@ class RealtimePresence {
     this.presenceAdapter = new PresenceAdapter(this.channel.channelAdapter, opts);
   }
 }
+function normalizeChannelError(reason) {
+  if (reason instanceof Error) {
+    return reason;
+  }
+  if (typeof reason === "string") {
+    return new Error(reason);
+  }
+  if (reason && typeof reason === "object") {
+    const obj = reason;
+    if (typeof obj.code === "number") {
+      const detail = typeof obj.reason === "string" && obj.reason ? ` (${obj.reason})` : "";
+      return new Error(`socket closed: ${obj.code}${detail}`, { cause: reason });
+    }
+    return new Error("channel error: transport failure", { cause: reason });
+  }
+  return new Error("channel error: connection lost");
+}
 class ChannelAdapter {
   constructor(socket, topic, params) {
     const phoenixParams = phoenixChannelParams(params);
@@ -703,7 +722,7 @@ class RealtimeChannel {
    * ```ts
    * import { createClient } from '@supabase/supabase-js'
    *
-   * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+   * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
    * const channel = supabase.channel('room1')
    * channel
    *   .on('broadcast', { event: 'cursor-pos' }, (payload) => console.log(payload))
@@ -715,7 +734,7 @@ class RealtimeChannel {
    * import RealtimeClient from '@supabase/realtime-js'
    *
    * const client = new RealtimeClient('https://xyzcompany.supabase.co/realtime/v1', {
-   *   params: { apikey: 'publishable-or-anon-key' },
+   *   params: { apikey: 'your-publishable-key' },
    * })
    * const channel = new RealtimeChannel('realtime:public:messages', { config: {} }, client)
    * ```
@@ -768,7 +787,7 @@ class RealtimeChannel {
         accessTokenPayload.access_token = this.socket.accessTokenValue;
       }
       this._onError((reason) => {
-        callback === null || callback === void 0 ? void 0 : callback(REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR, reason);
+        callback === null || callback === void 0 ? void 0 : callback(REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR, normalizeChannelError(reason));
       });
       this._onClose(() => callback === null || callback === void 0 ? void 0 : callback(REALTIME_SUBSCRIBE_STATES.CLOSED));
       this.updateJoinPayload(Object.assign({ config }, accessTokenPayload));
@@ -784,7 +803,8 @@ class RealtimeChannel {
         this._updatePostgresBindings(postgres_changes2, callback);
       }).receive("error", (error) => {
         this.state = CHANNEL_STATES.errored;
-        callback === null || callback === void 0 ? void 0 : callback(REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR, new Error(JSON.stringify(Object.values(error).join(", ") || "error")));
+        const message = Object.values(error).join(", ") || "error";
+        callback === null || callback === void 0 ? void 0 : callback(REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR, new Error(message, { cause: error }));
       }).receive("timeout", () => {
         callback === null || callback === void 0 ? void 0 : callback(REALTIME_SUBSCRIBE_STATES.TIMED_OUT);
       });
@@ -1141,7 +1161,7 @@ class RealtimeChannel {
         await ((_b = response.body) === null || _b === void 0 ? void 0 : _b.cancel());
         return response.ok ? "ok" : "error";
       } catch (error) {
-        if (error.name === "AbortError") {
+        if (error instanceof Error && error.name === "AbortError") {
           return "timed out";
         } else {
           return "error";
@@ -1515,7 +1535,7 @@ class RealtimeClient {
    * ```ts
    * import { createClient } from '@supabase/supabase-js'
    *
-   * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+   * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
    * const channel = supabase.channel('room1')
    * channel
    *   .on('broadcast', { event: 'cursor-pos' }, (payload) => console.log(payload))
@@ -1527,7 +1547,7 @@ class RealtimeClient {
    * import RealtimeClient from '@supabase/realtime-js'
    *
    * const client = new RealtimeClient('https://xyzcompany.supabase.co/realtime/v1', {
-   *   params: { apikey: 'publishable-or-anon-key' },
+   *   params: { apikey: 'your-publishable-key' },
    * })
    * client.connect()
    * ```
@@ -1547,6 +1567,8 @@ class RealtimeClient {
     this._authPromise = null;
     this._workerHeartbeatTimer = void 0;
     this._pendingWorkerHeartbeatRef = null;
+    this._pendingDisconnectTimer = null;
+    this._disconnectOnEmptyChannelsAfterMs = 0;
     this._resolveFetch = (customFetch) => {
       if (customFetch) {
         return (...args) => customFetch(...args);
@@ -1617,6 +1639,7 @@ Option 2: Install and provide the "ws" package:
    * @category Realtime
    */
   async disconnect(code, reason) {
+    this._cancelPendingDisconnect();
     if (this.isDisconnecting()) {
       return "ok";
     }
@@ -1644,9 +1667,6 @@ Option 2: Install and provide the "ws" package:
     if (status === "ok") {
       channel.teardown();
     }
-    if (this.channels.length === 0) {
-      this.disconnect();
-    }
     return status;
   }
   /**
@@ -1661,7 +1681,7 @@ Option 2: Install and provide the "ws" package:
       return result2;
     });
     const result = await Promise.all(promises);
-    this.disconnect();
+    await this.disconnect();
     return result;
   }
   /**
@@ -1720,6 +1740,7 @@ Option 2: Install and provide the "ws" package:
     const exists = this.getChannels().find((c) => c.topic === realtimeTopic);
     if (!exists) {
       const chan = new RealtimeChannel(`realtime:${topic}`, params, this);
+      this._cancelPendingDisconnect();
       this.channels.push(chan);
       return chan;
     } else {
@@ -1808,6 +1829,35 @@ Option 2: Install and provide the "ws" package:
    */
   _remove(channel) {
     this.channels = this.channels.filter((c) => c.topic !== channel.topic);
+    if (this.channels.length === 0) {
+      this.log("transport", "no channels remaining, scheduling disconnect");
+      this._schedulePendingDisconnect();
+    }
+  }
+  /** @internal */
+  _schedulePendingDisconnect() {
+    this._cancelPendingDisconnect();
+    if (this._disconnectOnEmptyChannelsAfterMs === 0) {
+      this.log("transport", "disconnecting immediately - no channels");
+      this.disconnect();
+      return;
+    }
+    this._pendingDisconnectTimer = setTimeout(() => {
+      this._pendingDisconnectTimer = null;
+      if (this.channels.length === 0) {
+        this.log("transport", "deferred disconnect fired - no channels, disconnecting");
+        this.disconnect();
+      }
+    }, this._disconnectOnEmptyChannelsAfterMs);
+    this.log("transport", `deferred disconnect scheduled in ${this._disconnectOnEmptyChannelsAfterMs}ms`);
+  }
+  /** @internal */
+  _cancelPendingDisconnect() {
+    if (this._pendingDisconnectTimer !== null) {
+      this.log("transport", "pending disconnect cancelled - channel activity detected");
+      clearTimeout(this._pendingDisconnectTimer);
+      this._pendingDisconnectTimer = null;
+    }
   }
   /**
    * Perform the actual auth operation
@@ -1958,22 +2008,23 @@ Option 2: Install and provide the "ws" package:
    * @internal
    */
   _initializeOptions(options) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
     this.worker = (_a = options === null || options === void 0 ? void 0 : options.worker) !== null && _a !== void 0 ? _a : false;
     this.accessToken = (_b = options === null || options === void 0 ? void 0 : options.accessToken) !== null && _b !== void 0 ? _b : null;
     const result = {};
     result.timeout = (_c = options === null || options === void 0 ? void 0 : options.timeout) !== null && _c !== void 0 ? _c : DEFAULT_TIMEOUT;
     result.heartbeatIntervalMs = (_d = options === null || options === void 0 ? void 0 : options.heartbeatIntervalMs) !== null && _d !== void 0 ? _d : CONNECTION_TIMEOUTS.HEARTBEAT_INTERVAL;
-    result.transport = (_e = options === null || options === void 0 ? void 0 : options.transport) !== null && _e !== void 0 ? _e : WebSocketFactory.getWebSocketConstructor();
+    this._disconnectOnEmptyChannelsAfterMs = (_e = options === null || options === void 0 ? void 0 : options.disconnectOnEmptyChannelsAfterMs) !== null && _e !== void 0 ? _e : 2 * ((_f = options === null || options === void 0 ? void 0 : options.heartbeatIntervalMs) !== null && _f !== void 0 ? _f : CONNECTION_TIMEOUTS.HEARTBEAT_INTERVAL);
+    result.transport = (_g = options === null || options === void 0 ? void 0 : options.transport) !== null && _g !== void 0 ? _g : WebSocketFactory.getWebSocketConstructor();
     result.params = options === null || options === void 0 ? void 0 : options.params;
     result.logger = options === null || options === void 0 ? void 0 : options.logger;
     result.heartbeatCallback = this._wrapHeartbeatCallback(options === null || options === void 0 ? void 0 : options.heartbeatCallback);
-    result.reconnectAfterMs = (_f = options === null || options === void 0 ? void 0 : options.reconnectAfterMs) !== null && _f !== void 0 ? _f : ((tries) => {
+    result.reconnectAfterMs = (_h = options === null || options === void 0 ? void 0 : options.reconnectAfterMs) !== null && _h !== void 0 ? _h : ((tries) => {
       return RECONNECT_INTERVALS[tries - 1] || DEFAULT_RECONNECT_FALLBACK;
     });
     let defaultEncode;
     let defaultDecode;
-    const vsn = (_g = options === null || options === void 0 ? void 0 : options.vsn) !== null && _g !== void 0 ? _g : DEFAULT_VSN;
+    const vsn = (_j = options === null || options === void 0 ? void 0 : options.vsn) !== null && _j !== void 0 ? _j : DEFAULT_VSN;
     switch (vsn) {
       case VSN_1_0_0:
         defaultEncode = (payload, callback) => {
@@ -1991,8 +2042,8 @@ Option 2: Install and provide the "ws" package:
         throw new Error(`Unsupported serializer version: ${result.vsn}`);
     }
     result.vsn = vsn;
-    result.encode = (_h = options === null || options === void 0 ? void 0 : options.encode) !== null && _h !== void 0 ? _h : defaultEncode;
-    result.decode = (_j = options === null || options === void 0 ? void 0 : options.decode) !== null && _j !== void 0 ? _j : defaultDecode;
+    result.encode = (_k = options === null || options === void 0 ? void 0 : options.encode) !== null && _k !== void 0 ? _k : defaultEncode;
+    result.decode = (_l = options === null || options === void 0 ? void 0 : options.decode) !== null && _l !== void 0 ? _l : defaultDecode;
     result.beforeReconnect = this._reconnectAuth.bind(this);
     if ((options === null || options === void 0 ? void 0 : options.logLevel) || (options === null || options === void 0 ? void 0 : options.log_level)) {
       this.logLevel = options.logLevel || options.log_level;

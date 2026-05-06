@@ -128,13 +128,23 @@ const isValidBucketName = (bucketName) => {
   return /^[\w!.\*'() &$@=;:+,?-]+$/.test(bucketName);
 };
 const _getErrorMessage = (err) => {
-  var _err$error;
-  return err.msg || err.message || err.error_description || (typeof err.error === "string" ? err.error : (_err$error = err.error) === null || _err$error === void 0 ? void 0 : _err$error.message) || JSON.stringify(err);
+  if (typeof err === "object" && err !== null) {
+    const e = err;
+    if (typeof e.msg === "string") return e.msg;
+    if (typeof e.message === "string") return e.message;
+    if (typeof e.error_description === "string") return e.error_description;
+    if (typeof e.error === "string") return e.error;
+    if (typeof e.error === "object" && e.error !== null) {
+      const nested = e.error;
+      if (typeof nested.message === "string") return nested.message;
+    }
+  }
+  return JSON.stringify(err);
 };
 const handleError = async (error, reject, options, namespace) => {
-  if (error !== null && typeof error === "object" && typeof error.json === "function") {
+  if (error !== null && typeof error === "object" && "json" in error && typeof error.json === "function") {
     const responseError = error;
-    let status = parseInt(responseError.status, 10);
+    let status = parseInt(String(responseError.status), 10);
     if (!Number.isFinite(status)) status = 500;
     responseError.json().then((err) => {
       const statusCode = (err === null || err === void 0 ? void 0 : err.statusCode) || (err === null || err === void 0 ? void 0 : err.code) || status + "";
@@ -406,7 +416,8 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Uploads a file to an existing bucket.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The file path, including the file name. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to upload.
   * @param fileBody The body of the file to be stored in the bucket.
   * @param fileOptions Optional file upload options including cacheControl, contentType, upsert, and metadata.
@@ -460,7 +471,8 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Upload a file with a token generated from `createSignedUploadUrl`.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The file path, including the file name. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to upload.
   * @param token The token generated from `createSignedUploadUrl`
   * @param fileBody The body of the file to be stored in the bucket.
@@ -503,22 +515,28 @@ var StorageFileApi = class extends BaseApiClient {
     return _this3.handleOperation(async () => {
       let body;
       const options = _objectSpread2(_objectSpread2({}, DEFAULT_FILE_OPTIONS), fileOptions);
-      const headers = _objectSpread2(_objectSpread2({}, _this3.headers), { "x-upsert": String(options.upsert) });
+      let headers = _objectSpread2(_objectSpread2({}, _this3.headers), { "x-upsert": String(options.upsert) });
+      const metadata = options.metadata;
       if (typeof Blob !== "undefined" && fileBody instanceof Blob) {
         body = new FormData();
         body.append("cacheControl", options.cacheControl);
+        if (metadata) body.append("metadata", _this3.encodeMetadata(metadata));
         body.append("", fileBody);
       } else if (typeof FormData !== "undefined" && fileBody instanceof FormData) {
         body = fileBody;
-        body.append("cacheControl", options.cacheControl);
+        if (!body.has("cacheControl")) body.append("cacheControl", options.cacheControl);
+        if (metadata && !body.has("metadata")) body.append("metadata", _this3.encodeMetadata(metadata));
       } else {
         body = fileBody;
         headers["cache-control"] = `max-age=${options.cacheControl}`;
         headers["content-type"] = options.contentType;
+        if (metadata) headers["x-metadata"] = _this3.toBase64(_this3.encodeMetadata(metadata));
+        if ((typeof ReadableStream !== "undefined" && body instanceof ReadableStream || body && typeof body === "object" && "pipe" in body && typeof body.pipe === "function") && !options.duplex) options.duplex = "half";
       }
+      if (fileOptions === null || fileOptions === void 0 ? void 0 : fileOptions.headers) for (const [key, value] of Object.entries(fileOptions.headers)) headers = setHeader(headers, key, value);
       return {
         path: cleanPath,
-        fullPath: (await put(_this3.fetch, url.toString(), body, { headers })).Key
+        fullPath: (await put(_this3.fetch, url.toString(), body, _objectSpread2({ headers }, (options === null || options === void 0 ? void 0 : options.duplex) ? { duplex: options.duplex } : {}))).Key
       };
     });
   }
@@ -527,7 +545,8 @@ var StorageFileApi = class extends BaseApiClient {
   * Signed upload URLs can be used to upload files to the bucket without further authentication.
   * They are valid for 2 hours.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The file path, including the current file name. For example `folder/image.png`.
   * @param options.upsert If set to true, allows the file to be overwritten if it already exists.
   * @returns Promise with response containing signed upload URL, token, and path or error
@@ -578,10 +597,14 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Replaces an existing file at the specified path with a new one.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The relative file path. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to update.
   * @param fileBody The body of the file to be stored in the bucket.
-  * @param fileOptions Optional file upload options including cacheControl, contentType, upsert, and metadata.
+  * @param fileOptions Optional file upload options including cacheControl, contentType, and metadata.
+  * **Note:** The `upsert` option has no effect here. `update()` always replaces the
+  * file at the given path, so the `x-upsert` header is not sent. To control upsert
+  * behavior, use `upload()` instead.
   * @returns Promise with response containing file path, id, and fullPath or error
   *
   * @example Update file
@@ -591,8 +614,7 @@ var StorageFileApi = class extends BaseApiClient {
   *   .storage
   *   .from('avatars')
   *   .update('public/avatar1.png', avatarFile, {
-  *     cacheControl: '3600',
-  *     upsert: true
+  *     cacheControl: '3600'
   *   })
   * ```
   *
@@ -623,6 +645,7 @@ var StorageFileApi = class extends BaseApiClient {
   * - RLS policy permissions required:
   *   - `buckets` table permissions: none
   *   - `objects` table permissions: `update` and `select`
+  * - `update()` always replaces the file at the given path regardless of the `upsert` option.
   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
   * - For React Native, using either `Blob`, `File` or `FormData` does not work as intended. Update file using `ArrayBuffer` from base64 file data instead, see example below.
   */
@@ -632,7 +655,8 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Moves an existing file to a new path in the same bucket.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param fromPath The original file path, including the current file name. For example `folder/image.png`.
   * @param toPath The new file path, including the new file name. For example `folder/image-new.png`.
   * @param options The destination options.
@@ -676,7 +700,8 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Copies an existing file to a new path in the same bucket.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param fromPath The original file path, including the current file name. For example `folder/image.png`.
   * @param toPath The new file path, including the new file name. For example `folder/image-copy.png`.
   * @param options The destination options.
@@ -720,7 +745,8 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Creates a signed URL. Use a signed URL to share a file for a fixed amount of time.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The file path, including the current file name. For example `folder/image.png`.
   * @param expiresIn The number of seconds until the signed URL expires. For example, `60` for a URL which is valid for one minute.
   * @param options.download triggers the file as a download if set to true. Set this parameter as the name of the file if you want to trigger the download with a different filename.
@@ -791,7 +817,8 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Creates multiple signed URLs. Use a signed URL to share a file for a fixed amount of time.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param paths The file paths to be downloaded, including the current file names. For example `['folder/image.png', 'folder2/image2.png']`.
   * @param expiresIn The number of seconds until the signed URLs expire. For example, `60` for URLs which are valid for one minute.
   * @param options.download triggers the file as a download if set to true. Set this parameter as the name of the file if you want to trigger the download with a different filename.
@@ -850,7 +877,8 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Downloads a file from a private bucket. For public buckets, make a request to the URL returned from `getPublicUrl` instead.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The full path and file name of the file to be downloaded. For example `folder/image.png`.
   * @param options.transform Transform the asset before serving it to the client.
   * @param options.cacheNonce Append a cache nonce parameter to the URL to invalidate the cache.
@@ -931,7 +959,8 @@ var StorageFileApi = class extends BaseApiClient {
   * Returns detailed file metadata including size, content type, and timestamps.
   * Note: The API returns `last_modified` field, not `updated_at`.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The file path, including the file name. For example `folder/image.png`.
   * @returns Promise with response containing file metadata or error
   *
@@ -958,7 +987,8 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Checks the existence of a file.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The file path, including the file name. For example `folder/image.png`.
   * @returns Promise with response containing boolean indicating file existence or error
   *
@@ -996,7 +1026,8 @@ var StorageFileApi = class extends BaseApiClient {
   * A simple convenience function to get the URL for an asset in a public bucket. If you do not want to use this function, you can construct the public URL by concatenating the bucket URL with the path to the asset.
   * This function does not verify if the bucket is public. If a public URL is created for a bucket which is not public, you will not be able to download the asset.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The path and name of the file to generate the public URL for. For example `folder/image.png`.
   * @param options.download Triggers the file as a download if set to true. Set this parameter as the name of the file if you want to trigger the download with a different filename.
   * @param options.transform Transform the asset before serving it to the client.
@@ -1066,7 +1097,8 @@ var StorageFileApi = class extends BaseApiClient {
   * Returns an array of FileObject entries for the deleted files. Note that deprecated
   * fields like `bucket_id` may or may not be present in the response - do not rely on them.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param paths An array of files to delete, including the path and file name. For example [`'folder/image.png'`].
   * @returns Promise with response containing array of deleted file objects or error
   *
@@ -1115,7 +1147,8 @@ var StorageFileApi = class extends BaseApiClient {
   * Additionally, deprecated fields like `bucket_id`, `owner`, and `buckets` are NOT returned
   * by this method.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param path The folder path.
   * @param options Search options including limit (defaults to 100), offset, sortBy, and search
   * @param parameters Optional fetch parameters including signal for cancellation
@@ -1204,7 +1237,8 @@ var StorageFileApi = class extends BaseApiClient {
   *
   * @experimental this method signature might change in the future
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param options Search options including prefix, cursor for pagination, limit, with_delimiter
   * @param parameters Optional fetch parameters including signal for cancellation
   * @returns Promise with response containing folders/objects arrays with pagination info or error
@@ -1271,7 +1305,7 @@ var StorageFileApi = class extends BaseApiClient {
     return query;
   }
 };
-const version = "2.104.1";
+const version = "2.105.3";
 const DEFAULT_HEADERS = { "X-Client-Info": `storage-js/${version}` };
 var StorageBucketApi = class extends BaseApiClient {
   constructor(url, headers = {}, fetch$1, opts) {
@@ -1286,7 +1320,8 @@ var StorageBucketApi = class extends BaseApiClient {
   /**
   * Retrieves the details of all Storage buckets within an existing project.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param options Query parameters for listing buckets
   * @param options.limit Maximum number of buckets to return
   * @param options.offset Number of buckets to skip
@@ -1331,7 +1366,8 @@ var StorageBucketApi = class extends BaseApiClient {
   /**
   * Retrieves the details of an existing Storage bucket.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param id The unique identifier of the bucket you would like to retrieve.
   * @returns Promise with response containing bucket details or error
   *
@@ -1376,7 +1412,8 @@ var StorageBucketApi = class extends BaseApiClient {
   /**
   * Creates a new Storage bucket
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param id A unique identifier for the bucket you are creating.
   * @param options.public The visibility of the bucket. Public buckets don't require an authorization token to download objects, but still require a valid token for all other operations. By default, buckets are private.
   * @param options.fileSizeLimit specifies the max file size in bytes that can be uploaded to this bucket.
@@ -1432,7 +1469,8 @@ var StorageBucketApi = class extends BaseApiClient {
   /**
   * Updates a Storage bucket
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param id A unique identifier for the bucket you are updating.
   * @param options.public The visibility of the bucket. Public buckets don't require an authorization token to download objects, but still require a valid token for all other operations.
   * @param options.fileSizeLimit specifies the max file size in bytes that can be uploaded to this bucket.
@@ -1485,7 +1523,8 @@ var StorageBucketApi = class extends BaseApiClient {
   /**
   * Removes all objects inside a single bucket.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param id The unique identifier of the bucket you would like to empty.
   * @returns Promise with success message or error
   *
@@ -1522,7 +1561,8 @@ var StorageBucketApi = class extends BaseApiClient {
   * Deletes an existing bucket. A bucket can't be deleted with existing objects inside it.
   * You must first `empty()` the bucket.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
   * @param id The unique identifier of the bucket you would like to delete.
   * @returns Promise with success message or error
   *
@@ -1575,7 +1615,8 @@ var StorageAnalyticsClient = class extends BaseApiClient {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Analytics Buckets
+  * @category Storage
+  * @subcategory Analytics Buckets
   * @param url - The base URL for the storage API
   * @param headers - HTTP headers to include in requests
   * @param fetch - Optional custom fetch implementation
@@ -1584,7 +1625,7 @@ var StorageAnalyticsClient = class extends BaseApiClient {
   * ```typescript
   * import { createClient } from '@supabase/supabase-js'
   *
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
   * const { data, error } = await supabase.storage.analytics.listBuckets()
   * ```
   *
@@ -1608,7 +1649,8 @@ var StorageAnalyticsClient = class extends BaseApiClient {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Analytics Buckets
+  * @category Storage
+  * @subcategory Analytics Buckets
   * @param name A unique name for the bucket you are creating
   * @returns Promise with response containing newly created analytics bucket or error
   *
@@ -1652,7 +1694,8 @@ var StorageAnalyticsClient = class extends BaseApiClient {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Analytics Buckets
+  * @category Storage
+  * @subcategory Analytics Buckets
   * @param options Query parameters for listing buckets
   * @param options.limit Maximum number of buckets to return
   * @param options.offset Number of buckets to skip
@@ -1717,7 +1760,8 @@ var StorageAnalyticsClient = class extends BaseApiClient {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Analytics Buckets
+  * @category Storage
+  * @subcategory Analytics Buckets
   * @param bucketName The unique identifier of the bucket you would like to delete
   * @returns Promise with response containing success message or error
   *
@@ -1758,7 +1802,8 @@ var StorageAnalyticsClient = class extends BaseApiClient {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Analytics Buckets
+  * @category Storage
+  * @subcategory Analytics Buckets
   * @param bucketName - The name of the analytics bucket (warehouse) to connect to
   * @returns The wrapped Iceberg catalog client
   * @throws {StorageError} If the bucket name is invalid
@@ -2041,7 +2086,8 @@ var StorageVectorsClient = class extends VectorBucketApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param url - Base URL of the Storage Vectors REST API.
   * @param options.headers - Optional headers (for example `Authorization`) applied to every request.
   * @param options.fetch - Optional custom `fetch` implementation for non-browser runtimes.
@@ -2050,7 +2096,7 @@ var StorageVectorsClient = class extends VectorBucketApi {
   * ```typescript
   * import { createClient } from '@supabase/supabase-js'
   *
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
   * const bucket = supabase.storage.vectors.from('embeddings-prod')
   * ```
   *
@@ -2073,7 +2119,8 @@ var StorageVectorsClient = class extends VectorBucketApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param vectorBucketName - Name of the vector bucket
   * @returns Bucket-scoped client with index and vector operations
   *
@@ -2094,7 +2141,8 @@ var StorageVectorsClient = class extends VectorBucketApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param vectorBucketName - Unique name for the vector bucket
   * @returns Promise with empty response on success or error
   *
@@ -2118,7 +2166,8 @@ var StorageVectorsClient = class extends VectorBucketApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param vectorBucketName - Name of the vector bucket
   * @returns Promise with bucket metadata or error
   *
@@ -2144,7 +2193,8 @@ var StorageVectorsClient = class extends VectorBucketApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param options - Optional filters (prefix, maxResults, nextToken)
   * @returns Promise with list of buckets or error
   *
@@ -2173,7 +2223,8 @@ var StorageVectorsClient = class extends VectorBucketApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param vectorBucketName - Name of the vector bucket to delete
   * @returns Promise with empty response on success or error
   *
@@ -2198,7 +2249,8 @@ var VectorBucketScope = class extends VectorIndexApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @example Creating a vector bucket scope
   * ```typescript
   * const bucket = supabase.storage.vectors.from('embeddings-prod')
@@ -2217,7 +2269,8 @@ var VectorBucketScope = class extends VectorIndexApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param options - Index configuration (vectorBucketName is automatically set)
   * @returns Promise with empty response on success or error
   *
@@ -2248,7 +2301,8 @@ var VectorBucketScope = class extends VectorIndexApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param options - Listing options (vectorBucketName is automatically set)
   * @returns Promise with response containing indexes array and pagination token or error
   *
@@ -2271,7 +2325,8 @@ var VectorBucketScope = class extends VectorIndexApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param indexName - Name of the index to retrieve
   * @returns Promise with index metadata or error
   *
@@ -2295,7 +2350,8 @@ var VectorBucketScope = class extends VectorIndexApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param indexName - Name of the index to delete
   * @returns Promise with empty response on success or error
   *
@@ -2318,7 +2374,8 @@ var VectorBucketScope = class extends VectorIndexApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param indexName - Name of the index
   * @returns Index-scoped client with vector data operations
   *
@@ -2353,7 +2410,8 @@ var VectorIndexScope = class extends VectorDataApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @example Creating a vector index scope
   * ```typescript
   * const index = supabase.storage.vectors.from('embeddings-prod').index('documents-openai')
@@ -2373,7 +2431,8 @@ var VectorIndexScope = class extends VectorDataApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param options - Vector insertion options (bucket and index names automatically set)
   * @returns Promise with empty response on success or error
   *
@@ -2407,7 +2466,8 @@ var VectorIndexScope = class extends VectorDataApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param options - Vector retrieval options (bucket and index names automatically set)
   * @returns Promise with response containing vectors array or error
   *
@@ -2436,7 +2496,8 @@ var VectorIndexScope = class extends VectorDataApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param options - Listing options (bucket and index names automatically set)
   * @returns Promise with response containing vectors array and pagination token or error
   *
@@ -2465,7 +2526,8 @@ var VectorIndexScope = class extends VectorDataApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param options - Query options (bucket and index names automatically set)
   * @returns Promise with response containing matches array of similar vectors ordered by distance or error
   *
@@ -2497,7 +2559,8 @@ var VectorIndexScope = class extends VectorDataApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
   * @param options - Deletion options (bucket and index names automatically set)
   * @returns Promise with empty response on success or error
   *
@@ -2521,12 +2584,14 @@ var StorageClient = class extends StorageBucketApi {
   /**
   * Creates a client for Storage buckets, files, analytics, and vectors.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
+  *
   * @example Using supabase-js (recommended)
   * ```ts
   * import { createClient } from '@supabase/supabase-js'
   *
-  * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+  * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
   * const avatars = supabase.storage.from('avatars')
   * ```
   *
@@ -2535,7 +2600,7 @@ var StorageClient = class extends StorageBucketApi {
   * import { StorageClient } from '@supabase/storage-js'
   *
   * const storage = new StorageClient('https://xyzcompany.supabase.co/storage/v1', {
-  *   apikey: 'publishable-or-anon-key',
+  *   apikey: 'your-publishable-key',
   * })
   * const avatars = storage.from('avatars')
   * ```
@@ -2546,7 +2611,9 @@ var StorageClient = class extends StorageBucketApi {
   /**
   * Perform file operation in a bucket.
   *
-  * @category File Buckets
+  * @category Storage
+  * @subcategory File Buckets
+  *
   * @param id The bucket id to operate on.
   *
   * @example Accessing a bucket
@@ -2565,7 +2632,9 @@ var StorageClient = class extends StorageBucketApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Vector Buckets
+  * @category Storage
+  * @subcategory Vector Buckets
+  *
   * @returns A StorageVectorsClient instance configured with the current storage settings.
   */
   get vectors() {
@@ -2582,7 +2651,9 @@ var StorageClient = class extends StorageBucketApi {
   *
   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type.
   *
-  * @category Analytics Buckets
+  * @category Storage
+  * @subcategory Analytics Buckets
+  *
   * @returns A StorageAnalyticsClient instance configured with the current storage settings.
   */
   get analytics() {

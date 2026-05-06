@@ -1,5 +1,5 @@
 import { __rest } from "tslib";
-const version = "2.104.1";
+const version = "2.105.3";
 const AUTO_REFRESH_TICK_DURATION_MS = 30 * 1e3;
 const AUTO_REFRESH_TICK_THRESHOLD = 3;
 const EXPIRY_MARGIN_MS = AUTO_REFRESH_TICK_THRESHOLD * AUTO_REFRESH_TICK_DURATION_MS;
@@ -335,7 +335,7 @@ function parseParametersFromURL(href) {
       hashSearchParams.forEach((value, key) => {
         result[key] = value;
       });
-    } catch (e) {
+    } catch (_e) {
     }
   }
   url.searchParams.forEach((value, key) => {
@@ -483,7 +483,7 @@ function parseResponseAPIVersion(response) {
   try {
     const date = /* @__PURE__ */ new Date(`${apiVersion}T00:00:00.0Z`);
     return date;
-  } catch (e) {
+  } catch (_e) {
     return null;
   }
 }
@@ -517,6 +517,11 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 function validateUUID(str) {
   if (!UUID_REGEX.test(str)) {
     throw new Error("@supabase/auth-js: Expected parameter to be UUID but is not");
+  }
+}
+function assertPasskeyExperimentalEnabled(experimental) {
+  if (!experimental.passkey) {
+    throw new Error("@supabase/auth-js: the passkey API is experimental and disabled by default. Enable it by passing `auth: { experimental: { passkey: true } }` to createClient (or to the GoTrueClient constructor).");
   }
 }
 function userNotAvailableProxy() {
@@ -565,7 +570,20 @@ function insecureUserWarningProxy(user, suppressWarningRef) {
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
-const _getErrorMessage = (err) => err.msg || err.message || err.error_description || err.error || JSON.stringify(err);
+const _getErrorMessage = (err) => {
+  if (typeof err === "object" && err !== null) {
+    const e = err;
+    if (typeof e.msg === "string")
+      return e.msg;
+    if (typeof e.message === "string")
+      return e.message;
+    if (typeof e.error_description === "string")
+      return e.error_description;
+    if (typeof e.error === "string")
+      return e.error;
+  }
+  return JSON.stringify(err);
+};
 const NETWORK_ERROR_CODES = [502, 503, 504, 520, 521, 522, 523, 524, 530];
 async function handleError(error) {
   var _a;
@@ -698,7 +716,7 @@ function _noResolveJsonResponse(data) {
   return data;
 }
 function hasSession(data) {
-  return data.access_token && data.refresh_token && data.expires_in;
+  return !!data.access_token && !!data.refresh_token && !!data.expires_in;
 }
 const SIGN_OUT_SCOPES = ["global", "local", "others"];
 class GoTrueAdminApi {
@@ -709,7 +727,7 @@ class GoTrueAdminApi {
    * ```ts
    * import { createClient } from '@supabase/supabase-js'
    *
-   * const supabase = createClient('https://xyzcompany.supabase.co', 'secret-or-service-role-key')
+   * const supabase = createClient('https://xyzcompany.supabase.co', 'your-secret-key')
    * const { data, error } = await supabase.auth.admin.listUsers()
    * ```
    *
@@ -719,14 +737,15 @@ class GoTrueAdminApi {
    *
    * const admin = new GoTrueAdminApi({
    *   url: 'https://xyzcompany.supabase.co/auth/v1',
-   *   headers: { Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}` },
+   *   headers: { Authorization: `Bearer ${process.env.SUPABASE_SECRET_KEY}` },
    * })
    * ```
    */
-  constructor({ url = "", headers = {}, fetch: fetch2 }) {
+  constructor({ url = "", headers = {}, fetch: fetch2, experimental }) {
     this.url = url;
     this.headers = headers;
     this.fetch = resolveFetch(fetch2);
+    this.experimental = experimental !== null && experimental !== void 0 ? experimental : {};
     this.mfa = {
       listFactors: this._listFactors.bind(this),
       deleteFactor: this._deleteFactor.bind(this)
@@ -746,6 +765,10 @@ class GoTrueAdminApi {
       updateProvider: this._updateCustomProvider.bind(this),
       deleteProvider: this._deleteCustomProvider.bind(this)
     };
+    this.passkey = {
+      listPasskeys: this._adminListPasskeys.bind(this),
+      deletePasskey: this._adminDeletePasskey.bind(this)
+    };
   }
   /**
    * Removes a logged-in session.
@@ -753,6 +776,7 @@ class GoTrueAdminApi {
    * @param scope The logout sope.
    *
    * @category Auth
+   * @subcategory Auth Admin
    */
   async signOut(jwt, scope = SIGN_OUT_SCOPES[0]) {
     if (SIGN_OUT_SCOPES.indexOf(scope) < 0) {
@@ -778,6 +802,7 @@ class GoTrueAdminApi {
    * @param options Additional options to be included when inviting.
    *
    * @category Auth
+   * @subcategory Auth Admin
    *
    * @remarks
    * - Sends an invite link to the user's email address.
@@ -858,6 +883,7 @@ class GoTrueAdminApi {
    * @param options.redirectTo The redirect url which should be appended to the generated link
    *
    * @category Auth
+   * @subcategory Auth Admin
    *
    * @remarks
    * - The following types can be passed into `generateLink()`: `signup`, `magiclink`, `invite`, `recovery`, `email_change_current`, `email_change_new`, `phone_change`.
@@ -999,6 +1025,7 @@ class GoTrueAdminApi {
    * This function should only be called on a server. Never expose your `service_role` key in the browser.
    *
    * @category Auth
+   * @subcategory Auth Admin
    *
    * @remarks
    * - To confirm the user's email address or phone number, set `email_confirm` or `phone_confirm` to true. Both arguments default to false.
@@ -1094,6 +1121,7 @@ class GoTrueAdminApi {
    * @param params An object which supports `page` and `perPage` as numbers, to alter the paginated results.
    *
    * @category Auth
+   * @subcategory Auth Admin
    *
    * @remarks
    * - Defaults to return 50 users per page.
@@ -1153,6 +1181,7 @@ class GoTrueAdminApi {
    * This function should only be called on a server. Never expose your `service_role` key in the browser.
    *
    * @category Auth
+   * @subcategory Auth Admin
    *
    * @remarks
    * - Fetches the user object from the database based on the user's id.
@@ -1253,6 +1282,7 @@ class GoTrueAdminApi {
    * @see {@link GoTrueClient.updateUser} for client-side user updates (triggers listeners automatically)
    *
    * @category Auth
+   * @subcategory Auth Admin
    *
    * @example Updates a user's email
    * ```js
@@ -1388,6 +1418,7 @@ class GoTrueAdminApi {
    * This function should only be called on a server. Never expose your `service_role` key in the browser.
    *
    * @category Auth
+   * @subcategory Auth Admin
    *
    * @remarks
    * - The `deleteUser()` method requires the user's ID, which maps to the `auth.users.id` column.
@@ -1722,6 +1753,46 @@ class GoTrueAdminApi {
       throw error;
     }
   }
+  /**
+   * Lists all passkeys for a user.
+   *
+   * This function should only be called on a server. Never expose your secret key in the browser.
+   *
+   * Requires `auth.experimental.passkey: true`.
+   */
+  async _adminListPasskeys(params) {
+    assertPasskeyExperimentalEnabled(this.experimental);
+    validateUUID(params.userId);
+    try {
+      return await _request(this.fetch, "GET", `${this.url}/admin/users/${params.userId}/passkeys`, { headers: this.headers, xform: (data) => ({ data, error: null }) });
+    } catch (error) {
+      if (isAuthError(error)) {
+        return { data: null, error };
+      }
+      throw error;
+    }
+  }
+  /**
+   * Deletes a user's passkey.
+   *
+   * This function should only be called on a server. Never expose your secret key in the browser.
+   *
+   * Requires `auth.experimental.passkey: true`.
+   */
+  async _adminDeletePasskey(params) {
+    assertPasskeyExperimentalEnabled(this.experimental);
+    validateUUID(params.userId);
+    validateUUID(params.passkeyId);
+    try {
+      await _request(this.fetch, "DELETE", `${this.url}/admin/users/${params.userId}/passkeys/${params.passkeyId}`, { headers: this.headers, noResolveJson: true });
+      return { data: null, error: null };
+    } catch (error) {
+      if (isAuthError(error)) {
+        return { data: null, error };
+      }
+      throw error;
+    }
+  }
 }
 function memoryLocalStorageAdapter(store = {}) {
   return {
@@ -1810,7 +1881,7 @@ async function navigatorLock(name, acquireTimeout, fn) {
     if (acquireTimeout > 0) {
       clearTimeout(acquireTimeoutTimer);
     }
-    if ((e === null || e === void 0 ? void 0 : e.name) === "AbortError" && acquireTimeout > 0) {
+    if (e !== null && typeof e === "object" && "name" in e && e.name === "AbortError" && acquireTimeout > 0) {
       if (abortController.signal.aborted) {
         if (internals.debug) {
           console.log("@supabase/gotrue-js: navigatorLock: acquire timeout, recovering by stealing lock", name);
@@ -1937,6 +2008,13 @@ class WebAuthnError extends Error {
     this.__isWebAuthnError = true;
     this.name = (_a = name !== null && name !== void 0 ? name : cause instanceof Error ? cause.name : void 0) !== null && _a !== void 0 ? _a : "Unknown Error";
     this.code = code;
+  }
+  toJSON() {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code
+    };
   }
 }
 class WebAuthnUnknownError extends WebAuthnError {
@@ -2631,7 +2709,8 @@ const DEFAULT_OPTIONS = {
   throwOnError: false,
   lockAcquireTimeout: 5e3,
   // 5 seconds
-  skipAutoInitialize: false
+  skipAutoInitialize: false,
+  experimental: {}
 };
 async function lockNoOp(name, acquireTimeout, fn) {
   return await fn();
@@ -2662,7 +2741,7 @@ class GoTrueClient {
    * ```ts
    * import { createClient } from '@supabase/supabase-js'
    *
-   * const supabase = createClient('https://xyzcompany.supabase.co', 'publishable-or-anon-key')
+   * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key')
    * const { data, error } = await supabase.auth.getUser()
    * ```
    *
@@ -2672,13 +2751,13 @@ class GoTrueClient {
    *
    * const auth = new GoTrueClient({
    *   url: 'https://xyzcompany.supabase.co/auth/v1',
-   *   headers: { apikey: 'publishable-or-anon-key' },
+   *   headers: { apikey: 'your-publishable-key' },
    *   storageKey: 'supabase-auth',
    * })
    * ```
    */
   constructor(options) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     this.userStorage = null;
     this.memoryStorage = null;
     this.stateChangeEmitters = /* @__PURE__ */ new Map();
@@ -2711,10 +2790,12 @@ class GoTrueClient {
     }
     this.persistSession = settings.persistSession;
     this.autoRefreshToken = settings.autoRefreshToken;
+    this.experimental = (_b = settings.experimental) !== null && _b !== void 0 ? _b : {};
     this.admin = new GoTrueAdminApi({
       url: settings.url,
       headers: settings.headers,
-      fetch: settings.fetch
+      fetch: settings.fetch,
+      experimental: this.experimental
     });
     this.url = settings.url;
     this.headers = settings.headers;
@@ -2727,7 +2808,7 @@ class GoTrueClient {
     this.lockAcquireTimeout = settings.lockAcquireTimeout;
     if (settings.lock) {
       this.lock = settings.lock;
-    } else if (this.persistSession && isBrowser() && ((_b = globalThis === null || globalThis === void 0 ? void 0 : globalThis.navigator) === null || _b === void 0 ? void 0 : _b.locks)) {
+    } else if (this.persistSession && isBrowser() && ((_c = globalThis === null || globalThis === void 0 ? void 0 : globalThis.navigator) === null || _c === void 0 ? void 0 : _c.locks)) {
       this.lock = navigatorLock;
     } else {
       this.lock = lockNoOp;
@@ -2753,6 +2834,15 @@ class GoTrueClient {
       listGrants: this._listOAuthGrants.bind(this),
       revokeGrant: this._revokeOAuthGrant.bind(this)
     };
+    this.passkey = {
+      startRegistration: this._startPasskeyRegistration.bind(this),
+      verifyRegistration: this._verifyPasskeyRegistration.bind(this),
+      startAuthentication: this._startPasskeyAuthentication.bind(this),
+      verifyAuthentication: this._verifyPasskeyAuthentication.bind(this),
+      list: this._listPasskeys.bind(this),
+      update: this._updatePasskey.bind(this),
+      delete: this._deletePasskey.bind(this)
+    };
     if (this.persistSession) {
       if (settings.storage) {
         this.storage = settings.storage;
@@ -2777,7 +2867,7 @@ class GoTrueClient {
       } catch (e) {
         console.error("Failed to create a new BroadcastChannel, multi-tab state changes will not be available", e);
       }
-      (_c = this.broadcastChannel) === null || _c === void 0 ? void 0 : _c.addEventListener("message", async (event) => {
+      (_d = this.broadcastChannel) === null || _d === void 0 ? void 0 : _d.addEventListener("message", async (event) => {
         this._debug("received broadcast notification from other tab or client", event);
         try {
           await this._notifyAllSubscribers(event.data.event, event.data.session, false);
@@ -3764,7 +3854,7 @@ class GoTrueClient {
     }
   }
   async signInWithEthereum(credentials) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m;
     let message;
     let signature;
     if ("message" in credentials) {
@@ -3813,11 +3903,11 @@ class GoTrueClient {
         version: "1",
         chainId,
         nonce: (_c = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _c === void 0 ? void 0 : _c.nonce,
-        issuedAt: (_e = (_d = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _d === void 0 ? void 0 : _d.issuedAt) !== null && _e !== void 0 ? _e : /* @__PURE__ */ new Date(),
-        expirationTime: (_f = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _f === void 0 ? void 0 : _f.expirationTime,
-        notBefore: (_g = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _g === void 0 ? void 0 : _g.notBefore,
-        requestId: (_h = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _h === void 0 ? void 0 : _h.requestId,
-        resources: (_j = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _j === void 0 ? void 0 : _j.resources
+        issuedAt: (_f = (_d = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _d === void 0 ? void 0 : _d.issuedAt) !== null && _f !== void 0 ? _f : /* @__PURE__ */ new Date(),
+        expirationTime: (_g = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _g === void 0 ? void 0 : _g.expirationTime,
+        notBefore: (_h = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _h === void 0 ? void 0 : _h.notBefore,
+        requestId: (_j = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _j === void 0 ? void 0 : _j.requestId,
+        resources: (_k = options === null || options === void 0 ? void 0 : options.signInWithEthereum) === null || _k === void 0 ? void 0 : _k.resources
       };
       message = createSiweMessage(siweMessage);
       signature = await resolvedWallet.request({
@@ -3832,7 +3922,7 @@ class GoTrueClient {
           chain: "ethereum",
           message,
           signature
-        }, ((_k = credentials.options) === null || _k === void 0 ? void 0 : _k.captchaToken) ? { gotrue_meta_security: { captcha_token: (_l = credentials.options) === null || _l === void 0 ? void 0 : _l.captchaToken } } : null),
+        }, ((_l = credentials.options) === null || _l === void 0 ? void 0 : _l.captchaToken) ? { gotrue_meta_security: { captcha_token: (_m = credentials.options) === null || _m === void 0 ? void 0 : _m.captchaToken } } : null),
         xform: _sessionResponse
       });
       if (error) {
@@ -3855,7 +3945,7 @@ class GoTrueClient {
     }
   }
   async signInWithSolana(credentials) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o;
     let message;
     let signature;
     if ("message" in credentials) {
@@ -3913,11 +4003,11 @@ class GoTrueClient {
           `URI: ${url.href}`,
           `Issued At: ${(_c = (_b = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _b === void 0 ? void 0 : _b.issuedAt) !== null && _c !== void 0 ? _c : (/* @__PURE__ */ new Date()).toISOString()}`,
           ...((_d = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _d === void 0 ? void 0 : _d.notBefore) ? [`Not Before: ${options.signInWithSolana.notBefore}`] : [],
-          ...((_e = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _e === void 0 ? void 0 : _e.expirationTime) ? [`Expiration Time: ${options.signInWithSolana.expirationTime}`] : [],
-          ...((_f = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _f === void 0 ? void 0 : _f.chainId) ? [`Chain ID: ${options.signInWithSolana.chainId}`] : [],
-          ...((_g = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _g === void 0 ? void 0 : _g.nonce) ? [`Nonce: ${options.signInWithSolana.nonce}`] : [],
-          ...((_h = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _h === void 0 ? void 0 : _h.requestId) ? [`Request ID: ${options.signInWithSolana.requestId}`] : [],
-          ...((_k = (_j = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _j === void 0 ? void 0 : _j.resources) === null || _k === void 0 ? void 0 : _k.length) ? [
+          ...((_f = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _f === void 0 ? void 0 : _f.expirationTime) ? [`Expiration Time: ${options.signInWithSolana.expirationTime}`] : [],
+          ...((_g = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _g === void 0 ? void 0 : _g.chainId) ? [`Chain ID: ${options.signInWithSolana.chainId}`] : [],
+          ...((_h = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _h === void 0 ? void 0 : _h.nonce) ? [`Nonce: ${options.signInWithSolana.nonce}`] : [],
+          ...((_j = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _j === void 0 ? void 0 : _j.requestId) ? [`Request ID: ${options.signInWithSolana.requestId}`] : [],
+          ...((_l = (_k = options === null || options === void 0 ? void 0 : options.signInWithSolana) === null || _k === void 0 ? void 0 : _k.resources) === null || _l === void 0 ? void 0 : _l.length) ? [
             "Resources",
             ...options.signInWithSolana.resources.map((resource) => `- ${resource}`)
           ] : []
@@ -3932,7 +4022,7 @@ class GoTrueClient {
     try {
       const { data, error } = await _request(this.fetch, "POST", `${this.url}/token?grant_type=web3`, {
         headers: this.headers,
-        body: Object.assign({ chain: "solana", message, signature: bytesToBase64URL(signature) }, ((_l = credentials.options) === null || _l === void 0 ? void 0 : _l.captchaToken) ? { gotrue_meta_security: { captcha_token: (_m = credentials.options) === null || _m === void 0 ? void 0 : _m.captchaToken } } : null),
+        body: Object.assign({ chain: "solana", message, signature: bytesToBase64URL(signature) }, ((_m = credentials.options) === null || _m === void 0 ? void 0 : _m.captchaToken) ? { gotrue_meta_security: { captcha_token: (_o = credentials.options) === null || _o === void 0 ? void 0 : _o.captchaToken } } : null),
         xform: _sessionResponse
       });
       if (error) {
@@ -4182,7 +4272,7 @@ class GoTrueClient {
    * ```
    */
   async signInWithOtp(credentials) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _f;
     try {
       if ("email" in credentials) {
         const { email, options } = credentials;
@@ -4215,7 +4305,7 @@ class GoTrueClient {
             data: (_c = options === null || options === void 0 ? void 0 : options.data) !== null && _c !== void 0 ? _c : {},
             create_user: (_d = options === null || options === void 0 ? void 0 : options.shouldCreateUser) !== null && _d !== void 0 ? _d : true,
             gotrue_meta_security: { captcha_token: options === null || options === void 0 ? void 0 : options.captchaToken },
-            channel: (_e = options === null || options === void 0 ? void 0 : options.channel) !== null && _e !== void 0 ? _e : "sms"
+            channel: (_f = options === null || options === void 0 ? void 0 : options.channel) !== null && _f !== void 0 ? _f : "sms"
           }
         });
         return this._returnResult({
@@ -4459,7 +4549,7 @@ class GoTrueClient {
    * ```
    */
   async signInWithSSO(params) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _f;
     try {
       let codeChallenge = null;
       let codeChallengeMethod = null;
@@ -4472,7 +4562,7 @@ class GoTrueClient {
         headers: this.headers,
         xform: _ssoResponse
       });
-      if (((_d = result.data) === null || _d === void 0 ? void 0 : _d.url) && isBrowser() && !((_e = params.options) === null || _e === void 0 ? void 0 : _e.skipBrowserRedirect)) {
+      if (((_d = result.data) === null || _d === void 0 ? void 0 : _d.url) && isBrowser() && !((_f = params.options) === null || _f === void 0 ? void 0 : _f.skipBrowserRedirect)) {
         window.location.assign(result.data.url);
       }
       return this._returnResult(result);
@@ -4738,7 +4828,7 @@ class GoTrueClient {
         this.pendingInLock.push((async () => {
           try {
             await result;
-          } catch (e) {
+          } catch (_e) {
           }
         })());
         return result;
@@ -5574,24 +5664,35 @@ class GoTrueClient {
    *
    * If using `others` scope, no `SIGNED_OUT` event is fired!
    *
+   * **Warning:** the default `scope` is `'global'`. This signs the user out of
+   * **every device they are currently signed in on**, not just the current
+   * tab/session. If you only want to sign the user out of the current session
+   * (the behavior most other auth libraries default to), pass
+   * `{ scope: 'local' }` explicitly.
+   *
    * @category Auth
    *
    * @remarks
    * - In order to use the `signOut()` method, the user needs to be signed in first.
-   * - By default, `signOut()` uses the global scope, which signs out all other sessions that the user is logged into as well. Customize this behavior by passing a scope parameter.
+   * - By default, `signOut()` uses the **global** scope, which signs out the user
+   *   on every device they are signed in on (not just the current one). Pass
+   *   `{ scope: 'local' }` to only sign out the current session. This is
+   *   usually what apps want on a "Sign out" button, especially when users
+   *   sign in from multiple devices and do not expect signing out of one to
+   *   terminate the others.
    * - Since Supabase Auth uses JWTs for authentication, the access token JWT will be valid until it's expired. When the user signs out, Supabase revokes the refresh token and deletes the JWT from the client-side. This does not revoke the JWT and it will still be valid until it expires.
    *
-   * @example Sign out (all sessions)
+   * @example Sign out of every device (global – default)
    * ```js
    * const { error } = await supabase.auth.signOut()
    * ```
    *
-   * @example Sign out (current session)
+   * @example Sign out only the current session (recommended for most apps)
    * ```js
    * const { error } = await supabase.auth.signOut({ scope: 'local' })
    * ```
    *
-   * @example Sign out (other sessions)
+   * @example Sign out of all other sessions, keep the current one
    * ```js
    * const { error } = await supabase.auth.signOut({ scope: 'others' })
    * ```
@@ -6040,7 +6141,7 @@ class GoTrueClient {
     var _a;
     try {
       const { data, error } = await this._useSession(async (result) => {
-        var _a2, _b, _c, _d, _e;
+        var _a2, _b, _c, _d, _f;
         const { data: data2, error: error2 } = result;
         if (error2)
           throw error2;
@@ -6052,7 +6153,7 @@ class GoTrueClient {
         });
         return await _request(this.fetch, "GET", url, {
           headers: this.headers,
-          jwt: (_e = (_d = data2.session) === null || _d === void 0 ? void 0 : _d.access_token) !== null && _e !== void 0 ? _e : void 0
+          jwt: (_f = (_d = data2.session) === null || _d === void 0 ? void 0 : _d.access_token) !== null && _f !== void 0 ? _f : void 0
         });
       });
       if (error)
@@ -6558,7 +6659,7 @@ class GoTrueClient {
         }
       });
     } catch (e) {
-      if (e.isAcquireTimeout || e instanceof LockAcquireTimeoutError) {
+      if (e instanceof LockAcquireTimeoutError) {
         this._debug("auto refresh token tick lock not available");
       } else {
         throw e;
@@ -7159,6 +7260,320 @@ class GoTrueClient {
         },
         error: null
       };
+    } catch (error) {
+      if (isAuthError(error)) {
+        return this._returnResult({ data: null, error });
+      }
+      throw error;
+    }
+  }
+  // --- Passkey Methods ---
+  /**
+   * Sign in with a passkey. Handles the full WebAuthn ceremony:
+   * 1. Fetches authentication challenge from server
+   * 2. Prompts user via navigator.credentials.get()
+   * 3. Verifies credential with server and creates session
+   *
+   * Requires `auth.experimental.passkey: true`.
+   *
+   * @category Auth
+   */
+  async signInWithPasskey(credentials) {
+    var _a, _b, _c;
+    assertPasskeyExperimentalEnabled(this.experimental);
+    try {
+      if (!browserSupportsWebAuthn()) {
+        return this._returnResult({
+          data: null,
+          error: new AuthUnknownError("Browser does not support WebAuthn", null)
+        });
+      }
+      const { data: options, error: optionsError } = await this._startPasskeyAuthentication({
+        options: { captchaToken: (_a = credentials === null || credentials === void 0 ? void 0 : credentials.options) === null || _a === void 0 ? void 0 : _a.captchaToken }
+      });
+      if (optionsError || !options) {
+        return this._returnResult({ data: null, error: optionsError });
+      }
+      const publicKeyOptions = deserializeCredentialRequestOptions(options.options);
+      const signal = (_c = (_b = credentials === null || credentials === void 0 ? void 0 : credentials.options) === null || _b === void 0 ? void 0 : _b.signal) !== null && _c !== void 0 ? _c : webAuthnAbortService.createNewAbortSignal();
+      const { data: credential, error: credentialError } = await getCredential({
+        publicKey: publicKeyOptions,
+        signal
+      });
+      if (credentialError || !credential) {
+        return this._returnResult({
+          data: null,
+          error: credentialError !== null && credentialError !== void 0 ? credentialError : new AuthUnknownError("WebAuthn ceremony failed", null)
+        });
+      }
+      const serialized = serializeCredentialRequestResponse(credential);
+      return this._verifyPasskeyAuthentication({
+        challengeId: options.challenge_id,
+        credential: serialized
+      });
+    } catch (error) {
+      if (isAuthError(error)) {
+        return this._returnResult({ data: null, error });
+      }
+      throw error;
+    }
+  }
+  /**
+   * Register a passkey for the current authenticated user. Handles the full WebAuthn ceremony:
+   * 1. Fetches registration challenge from server
+   * 2. Prompts user via navigator.credentials.create()
+   * 3. Verifies credential with server
+   *
+   * Requires an active session. Requires `auth.experimental.passkey: true`.
+   *
+   * @category Auth
+   */
+  async registerPasskey(credentials) {
+    var _a, _b;
+    assertPasskeyExperimentalEnabled(this.experimental);
+    try {
+      if (!browserSupportsWebAuthn()) {
+        return this._returnResult({
+          data: null,
+          error: new AuthUnknownError("Browser does not support WebAuthn", null)
+        });
+      }
+      const { data: options, error: optionsError } = await this._startPasskeyRegistration();
+      if (optionsError || !options) {
+        return this._returnResult({ data: null, error: optionsError });
+      }
+      const publicKeyOptions = deserializeCredentialCreationOptions(options.options);
+      const signal = (_b = (_a = credentials === null || credentials === void 0 ? void 0 : credentials.options) === null || _a === void 0 ? void 0 : _a.signal) !== null && _b !== void 0 ? _b : webAuthnAbortService.createNewAbortSignal();
+      const { data: credential, error: credentialError } = await createCredential({
+        publicKey: publicKeyOptions,
+        signal
+      });
+      if (credentialError || !credential) {
+        return this._returnResult({
+          data: null,
+          error: credentialError !== null && credentialError !== void 0 ? credentialError : new AuthUnknownError("WebAuthn ceremony failed", null)
+        });
+      }
+      const serialized = serializeCredentialCreationResponse(credential);
+      return this._verifyPasskeyRegistration({
+        challengeId: options.challenge_id,
+        credential: serialized
+      });
+    } catch (error) {
+      if (isAuthError(error)) {
+        return this._returnResult({ data: null, error });
+      }
+      throw error;
+    }
+  }
+  /**
+   * Start passkey registration for the current authenticated user.
+   * Returns WebAuthn credential creation options to pass to navigator.credentials.create().
+   */
+  async _startPasskeyRegistration() {
+    assertPasskeyExperimentalEnabled(this.experimental);
+    try {
+      return await this._useSession(async (result) => {
+        const { data: { session }, error: sessionError } = result;
+        if (sessionError) {
+          return this._returnResult({ data: null, error: sessionError });
+        }
+        if (!session) {
+          return this._returnResult({ data: null, error: new AuthSessionMissingError() });
+        }
+        const { data, error } = await _request(this.fetch, "POST", `${this.url}/passkeys/registration/options`, {
+          headers: this.headers,
+          jwt: session.access_token,
+          body: {}
+        });
+        if (error) {
+          return this._returnResult({ data: null, error });
+        }
+        return this._returnResult({ data, error: null });
+      });
+    } catch (error) {
+      if (isAuthError(error)) {
+        return this._returnResult({ data: null, error });
+      }
+      throw error;
+    }
+  }
+  /**
+   * Verify passkey registration with the credential response.
+   * The credentialResponse should be the serialized output of navigator.credentials.create().
+   */
+  async _verifyPasskeyRegistration(params) {
+    assertPasskeyExperimentalEnabled(this.experimental);
+    try {
+      return await this._useSession(async (result) => {
+        const { data: { session }, error: sessionError } = result;
+        if (sessionError) {
+          return this._returnResult({ data: null, error: sessionError });
+        }
+        if (!session) {
+          return this._returnResult({ data: null, error: new AuthSessionMissingError() });
+        }
+        const { data, error } = await _request(this.fetch, "POST", `${this.url}/passkeys/registration/verify`, {
+          headers: this.headers,
+          jwt: session.access_token,
+          body: {
+            challenge_id: params.challengeId,
+            credential: params.credential
+          }
+        });
+        if (error) {
+          return this._returnResult({ data: null, error });
+        }
+        return this._returnResult({ data, error: null });
+      });
+    } catch (error) {
+      if (isAuthError(error)) {
+        return this._returnResult({ data: null, error });
+      }
+      throw error;
+    }
+  }
+  /**
+   * Start passkey authentication.
+   * Returns WebAuthn credential request options to pass to navigator.credentials.get().
+   */
+  async _startPasskeyAuthentication(params) {
+    var _a;
+    assertPasskeyExperimentalEnabled(this.experimental);
+    try {
+      const { data, error } = await _request(this.fetch, "POST", `${this.url}/passkeys/authentication/options`, {
+        headers: this.headers,
+        body: {
+          gotrue_meta_security: { captcha_token: (_a = params === null || params === void 0 ? void 0 : params.options) === null || _a === void 0 ? void 0 : _a.captchaToken }
+        }
+      });
+      if (error) {
+        return this._returnResult({ data: null, error });
+      }
+      return this._returnResult({ data, error: null });
+    } catch (error) {
+      if (isAuthError(error)) {
+        return this._returnResult({ data: null, error });
+      }
+      throw error;
+    }
+  }
+  /**
+   * Verify passkey authentication and create a session.
+   * The credential should be the serialized output of navigator.credentials.get().
+   */
+  async _verifyPasskeyAuthentication(params) {
+    assertPasskeyExperimentalEnabled(this.experimental);
+    try {
+      const { data, error } = await _request(this.fetch, "POST", `${this.url}/passkeys/authentication/verify`, {
+        headers: this.headers,
+        body: {
+          challenge_id: params.challengeId,
+          credential: params.credential
+        },
+        xform: _sessionResponse
+      });
+      if (error) {
+        return this._returnResult({ data: null, error });
+      }
+      if (data.session) {
+        await this._saveSession(data.session);
+        await this._notifyAllSubscribers("SIGNED_IN", data.session);
+      }
+      return this._returnResult({ data, error: null });
+    } catch (error) {
+      if (isAuthError(error)) {
+        return this._returnResult({ data: null, error });
+      }
+      throw error;
+    }
+  }
+  /**
+   * List all passkeys for the current user.
+   */
+  async _listPasskeys() {
+    assertPasskeyExperimentalEnabled(this.experimental);
+    try {
+      return await this._useSession(async (result) => {
+        const { data: { session }, error: sessionError } = result;
+        if (sessionError) {
+          return this._returnResult({ data: null, error: sessionError });
+        }
+        if (!session) {
+          return this._returnResult({ data: null, error: new AuthSessionMissingError() });
+        }
+        const { data, error } = await _request(this.fetch, "GET", `${this.url}/passkeys`, {
+          headers: this.headers,
+          jwt: session.access_token,
+          xform: (data2) => ({ data: data2, error: null })
+        });
+        if (error) {
+          return this._returnResult({ data: null, error });
+        }
+        return this._returnResult({ data, error: null });
+      });
+    } catch (error) {
+      if (isAuthError(error)) {
+        return this._returnResult({ data: null, error });
+      }
+      throw error;
+    }
+  }
+  /**
+   * Update a passkey.
+   */
+  async _updatePasskey(params) {
+    assertPasskeyExperimentalEnabled(this.experimental);
+    try {
+      return await this._useSession(async (result) => {
+        const { data: { session }, error: sessionError } = result;
+        if (sessionError) {
+          return this._returnResult({ data: null, error: sessionError });
+        }
+        if (!session) {
+          return this._returnResult({ data: null, error: new AuthSessionMissingError() });
+        }
+        const { data, error } = await _request(this.fetch, "PATCH", `${this.url}/passkeys/${params.passkeyId}`, {
+          headers: this.headers,
+          jwt: session.access_token,
+          body: { friendly_name: params.friendlyName }
+        });
+        if (error) {
+          return this._returnResult({ data: null, error });
+        }
+        return this._returnResult({ data, error: null });
+      });
+    } catch (error) {
+      if (isAuthError(error)) {
+        return this._returnResult({ data: null, error });
+      }
+      throw error;
+    }
+  }
+  /**
+   * Delete a passkey.
+   */
+  async _deletePasskey(params) {
+    assertPasskeyExperimentalEnabled(this.experimental);
+    try {
+      return await this._useSession(async (result) => {
+        const { data: { session }, error: sessionError } = result;
+        if (sessionError) {
+          return this._returnResult({ data: null, error: sessionError });
+        }
+        if (!session) {
+          return this._returnResult({ data: null, error: new AuthSessionMissingError() });
+        }
+        const { error } = await _request(this.fetch, "DELETE", `${this.url}/passkeys/${params.passkeyId}`, {
+          headers: this.headers,
+          jwt: session.access_token,
+          noResolveJson: true
+        });
+        if (error) {
+          return this._returnResult({ data: null, error });
+        }
+        return this._returnResult({ data: null, error: null });
+      });
     } catch (error) {
       if (isAuthError(error)) {
         return this._returnResult({ data: null, error });
