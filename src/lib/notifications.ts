@@ -1,3 +1,5 @@
+import { supabase } from "@/integrations/supabase/client";
+
 export const NOTIFICATIONS_KEY = "lexora.notifications";
 export const NOTIFICATIONS_CHANGED_EVENT = "lexora:notifications-changed";
 
@@ -22,156 +24,111 @@ function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
 
-function safeParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function makeId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function dispatchNotificationsChanged() {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NOTIFICATIONS_CHANGED_EVENT));
 }
 
-function readNotifications(): NotificationRecord[] {
-  if (typeof window === "undefined") return [];
-
-  const raw = safeParse<Array<Partial<NotificationRecord>>>(
-    localStorage.getItem(NOTIFICATIONS_KEY),
-    [],
-  );
-
-  const normalized = raw
-    .map((item) => ({
-      id: String(item.id ?? "").trim() || makeId(),
-      targetEmail:
-        item.targetEmail === null || item.targetEmail === undefined
-          ? null
-          : normalizeEmail(String(item.targetEmail)),
-      title: String(item.title ?? "").trim(),
-      message: String(item.message ?? "").trim(),
-      senderEmail: normalizeEmail(String(item.senderEmail ?? "")),
-      createdAt: String(item.createdAt ?? "").trim() || new Date().toISOString(),
-      readBy: Array.isArray(item.readBy)
-        ? item.readBy.map((email) => normalizeEmail(String(email))).filter(Boolean)
-        : [],
-    }))
-    .filter((item) => item.title.length > 0 && item.message.length > 0);
-
-  const needsRewrite = normalized.length !== raw.length || raw.some((item, index) => {
-    const next = normalized[index];
-    return (
-      !next ||
-      String(item.id ?? "") !== next.id ||
-      String(item.title ?? "").trim() !== next.title ||
-      String(item.message ?? "").trim() !== next.message ||
-      String(item.senderEmail ?? "").trim().toLowerCase() !== next.senderEmail ||
-      String(item.createdAt ?? "").trim() !== next.createdAt
-    );
-  });
-
-  if (needsRewrite) {
-    localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(normalized));
-  }
-
-  return normalized;
+function toRow(record: NotificationRecord) {
+  return {
+    id: record.id,
+    target_email: record.targetEmail,
+    title: record.title,
+    message: record.message,
+    sender_email: record.senderEmail,
+    created_at: record.createdAt,
+    read_by: record.readBy,
+  };
 }
 
-function writeNotifications(records: NotificationRecord[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(records));
-  dispatchNotificationsChanged();
+function fromRow(row: {
+  id: string;
+  target_email: string | null;
+  title: string;
+  message: string;
+  sender_email: string;
+  created_at: string;
+  read_by: string[] | null;
+}): NotificationRecord {
+  return {
+    id: row.id,
+    targetEmail: row.target_email,
+    title: row.title,
+    message: row.message,
+    senderEmail: row.sender_email,
+    createdAt: row.created_at,
+    readBy: row.read_by ?? [],
+  };
 }
 
-function normalizeTargetEmail(targetEmail?: string | null) {
-  if (targetEmail === null || targetEmail === undefined) return null;
-  const normalized = normalizeEmail(targetEmail);
-  return normalized.length > 0 ? normalized : null;
-}
-
-export function createNotification(input: CreateNotificationInput) {
-  if (typeof window === "undefined") return;
-
+export async function createNotification(input: CreateNotificationInput) {
   const title = input.title.trim();
   const message = input.message.trim();
   const senderEmail = normalizeEmail(input.senderEmail);
-  const targetEmail = normalizeTargetEmail(input.targetEmail ?? null);
+  const targetEmail = input.targetEmail ? normalizeEmail(input.targetEmail) : null;
 
   if (!title || !message || !senderEmail) {
     throw new Error("Notification title, message, and sender are required.");
   }
 
-  const next: NotificationRecord = {
-    id: makeId(),
+  const payload = toRow({
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     targetEmail,
     title,
     message,
     senderEmail,
     createdAt: new Date().toISOString(),
     readBy: [],
-  };
+  });
 
-  writeNotifications([next, ...readNotifications()]);
+  const { error } = await supabase.from("notifications").insert(payload);
+  if (error) throw error;
+  dispatchNotificationsChanged();
 }
 
-export function getNotificationsForEmail(email: string | null | undefined) {
+export async function getNotificationsForEmail(email: string | null | undefined) {
   const normalized = normalizeEmail(email ?? "");
   if (!normalized) return [];
 
-  return readNotifications()
-    .filter((item) => item.targetEmail === null || item.targetEmail === normalized)
-    .sort((a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("*")
+    .or(`target_email.is.null,target_email.eq.${normalized}`)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("getNotificationsForEmail error", error);
+    return [];
+  }
+
+  return (data ?? []).map((row) => fromRow(row as any));
 }
 
-export function getUnreadNotificationsForEmail(email: string | null | undefined) {
+export async function getUnreadNotificationsForEmail(email: string | null | undefined) {
   const normalized = normalizeEmail(email ?? "");
   if (!normalized) return [];
 
-  return getNotificationsForEmail(normalized).filter(
-    (item) => !item.readBy.includes(normalized),
-  );
+  const all = await getNotificationsForEmail(normalized);
+  return all.filter((item) => !item.readBy.includes(normalized));
 }
 
-export function getUnreadNotificationCount(email: string | null | undefined) {
-  return getUnreadNotificationsForEmail(email).length;
+export async function getUnreadNotificationCount(email: string | null | undefined) {
+  return (await getUnreadNotificationsForEmail(email)).length;
 }
 
-export function markNotificationsReadForEmail(email: string | null | undefined) {
+export async function markNotificationsReadForEmail(email: string | null | undefined) {
   const normalized = normalizeEmail(email ?? "");
   if (!normalized) return;
 
-  const records = readNotifications();
-  let changed = false;
-
-  const next = records.map((item) => {
-    if (item.targetEmail !== null && item.targetEmail !== normalized) {
-      return item;
-    }
-
-    if (item.readBy.includes(normalized)) {
-      return item;
-    }
-
-    changed = true;
-    return {
-      ...item,
-      readBy: [...item.readBy, normalized],
-    };
-  });
-
-  if (changed) {
-    writeNotifications(next);
+  const unread = await getUnreadNotificationsForEmail(normalized);
+  for (const item of unread) {
+    const nextReadBy = Array.from(new Set([...item.readBy, normalized]));
+    const { error } = await supabase
+      .from("notifications")
+      .update({ read_by: nextReadBy })
+      .eq("id", item.id);
+    if (error) throw error;
   }
+
+  dispatchNotificationsChanged();
 }

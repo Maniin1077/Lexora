@@ -93,7 +93,9 @@ export function SiteHeader() {
   }, []);
 
   useEffect(() => {
-    const loadNotifications = () => setNotifications(getNotificationsForEmail(user?.email));
+    const loadNotifications = () => {
+      void getNotificationsForEmail(user?.email).then(setNotifications);
+    };
 
     loadNotifications();
 
@@ -115,8 +117,8 @@ export function SiteHeader() {
   useEffect(() => {
     if (!notificationsOpen || !user?.email) return;
 
-    markNotificationsReadForEmail(user.email);
-    setNotifications(getNotificationsForEmail(user.email));
+    void markNotificationsReadForEmail(user.email);
+    void getNotificationsForEmail(user.email).then(setNotifications);
   }, [notificationsOpen, user?.email]);
 
   const unreadCount = useMemo(() => {

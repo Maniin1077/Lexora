@@ -59,6 +59,34 @@ export type Database = {
     };
     Functions: {
       is_admin: { Args: { _user_id: string }; Returns: boolean };
+      normalize_email: { Args: { value: string }; Returns: string };
+      is_protected_owner_email: { Args: { value: string }; Returns: boolean };
+      is_owner_email: { Args: { value: string }; Returns: boolean };
+      is_admin_email: { Args: { value: string }; Returns: boolean };
+      verify_profile_password: {
+        Args: { value_email: string; value_password: string };
+        Returns: boolean;
+      };
+      change_user_email: {
+        Args: { actor_email: string; actor_password: string; new_email: string };
+        Returns: void;
+      };
+      grant_owner_access: {
+        Args: { actor_email: string; actor_password: string; target_email: string };
+        Returns: void;
+      };
+      revoke_owner_access: {
+        Args: { actor_email: string; actor_password: string; target_email: string };
+        Returns: void;
+      };
+      grant_admin_access: {
+        Args: { actor_email: string; actor_password: string; target_email: string };
+        Returns: void;
+      };
+      revoke_admin_access: {
+        Args: { actor_email: string; actor_password: string; target_email: string };
+        Returns: void;
+      };
     };
     Enums: {
       [_ in never]: never;

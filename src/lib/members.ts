@@ -5,6 +5,7 @@ import prianshu from "@/assets/members/Picture5.jpg";
 import charitha from "@/assets/members/Picture6.jpg";
 import seshank from "@/assets/members/Picture7.png";
 import kanishka from "@/assets/members/Picture8.jpg";
+import { supabase } from "@/integrations/supabase/client";
 
 export type MemberRole = "founder" | "core";
 
@@ -25,6 +26,15 @@ export interface MemberInput {
 
 export const MEMBERS_KEY = "lexora.members";
 export const MEMBERS_CHANGED_EVENT = "lexora:members-changed";
+
+type MemberRow = {
+  id: string;
+  name: string;
+  image: string;
+  role: MemberRole;
+  created_at: string;
+  updated_at: string;
+};
 
 const DEFAULT_MEMBERS: MemberItem[] = [
   {
@@ -85,24 +95,9 @@ const DEFAULT_MEMBERS: MemberItem[] = [
   },
 ];
 
-function safeParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 function notifyChanged() {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(MEMBERS_CHANGED_EVENT));
-}
-
-function writeMembers(items: MemberItem[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(MEMBERS_KEY, JSON.stringify(items));
-  notifyChanged();
 }
 
 function makeId() {
@@ -112,58 +107,58 @@ function makeId() {
   return `member_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function seedMembers() {
-  if (typeof window === "undefined") return [];
-
-  const parsed = safeParse<MemberItem[]>(localStorage.getItem(MEMBERS_KEY), []);
-  if (parsed.length > 0) return parsed;
-
-  localStorage.setItem(MEMBERS_KEY, JSON.stringify(DEFAULT_MEMBERS));
-  return DEFAULT_MEMBERS;
+function fromRow(row: MemberRow): MemberItem {
+  return {
+    id: row.id,
+    name: row.name,
+    image: row.image,
+    role: row.role,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
-export function getMembers(): MemberItem[] {
-  return seedMembers();
+export async function getMembers(): Promise<MemberItem[]> {
+  const { data, error } = await supabase.from("members").select("*").order("created_at", { ascending: true });
+  if (error) {
+    console.error("getMembers error", error);
+    return [];
+  }
+  return (data ?? []).map((row) => fromRow(row as MemberRow));
 }
 
-export function addMember(input: MemberInput): MemberItem {
+export async function addMember(input: MemberInput): Promise<MemberItem> {
   const now = new Date().toISOString();
-  const next: MemberItem = {
+  const next: MemberRow = {
     id: makeId(),
     name: input.name,
     image: input.image,
     role: input.role,
-    createdAt: now,
-    updatedAt: now,
+    created_at: now,
+    updated_at: now,
   };
 
-  const items = getMembers();
-  writeMembers([next, ...items]);
-  return next;
+  const { data, error } = await supabase.from("members").insert(next).select().single();
+  if (error) throw error;
+  notifyChanged();
+  return fromRow(data as MemberRow);
 }
 
-export function updateMember(id: string, input: MemberInput): MemberItem {
-  const items = getMembers();
-  const idx = items.findIndex((item) => item.id === id);
-  if (idx === -1) {
-    throw new Error("Member not found.");
-  }
-
-  const updated: MemberItem = {
-    ...items[idx],
+export async function updateMember(id: string, input: MemberInput): Promise<MemberItem> {
+  const payload = {
     name: input.name,
     image: input.image,
     role: input.role,
-    updatedAt: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
-
-  const next = [...items];
-  next[idx] = updated;
-  writeMembers(next);
-  return updated;
+  const { data, error } = await supabase.from("members").update(payload).eq("id", id).select().single();
+  if (error) throw error;
+  notifyChanged();
+  return fromRow(data as MemberRow);
 }
 
-export function removeMember(id: string) {
-  const next = getMembers().filter((item) => item.id !== id);
-  writeMembers(next);
+export async function removeMember(id: string) {
+  const { error } = await supabase.from("members").delete().eq("id", id);
+  if (error) throw error;
+  notifyChanged();
 }

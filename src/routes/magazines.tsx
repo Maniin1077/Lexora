@@ -27,6 +27,7 @@ import {
   MagazineItem,
   removeMagazine,
   updateMagazine,
+  subscribeMagazines,
 } from "@/lib/magazines";
 import { logChange } from "@/lib/change-log";
 
@@ -54,24 +55,32 @@ function MagazinesPage() {
   const actorEmail = user?.email ?? "unknown@lexora.local";
   const actorRole = role === "owner" ? "owner" : "admin";
 
-  const load = () => {
-    setItems(getMagazines());
+  const load = async () => {
+    setItems(await getMagazines());
   };
 
   useEffect(() => {
-    load();
+    void load();
 
-    const onChanged = () => load();
     const onStorage = (event: StorageEvent) => {
       if (event.key === null || event.key === MAGAZINES_KEY) {
-        load();
+        void load();
       }
     };
 
-    window.addEventListener(MAGAZINES_CHANGED_EVENT, onChanged);
+    window.addEventListener(MAGAZINES_CHANGED_EVENT, () => void load());
     window.addEventListener("storage", onStorage);
+
+    const unsub = subscribeMagazines(() => {
+      void load();
+    });
+
     return () => {
-      window.removeEventListener(MAGAZINES_CHANGED_EVENT, onChanged);
+      try {
+        unsub?.();
+      } catch (e) {
+        // ignore
+      }
       window.removeEventListener("storage", onStorage);
     };
   }, []);
@@ -139,9 +148,9 @@ function MagazinesPage() {
                 isProfileComplete={isProfileComplete}
                 userEmail={user?.email ?? null}
                 onEdit={() => setEditingMagazine(m)}
-                onDelete={() => {
+                onDelete={async () => {
                   if (!confirm(`Delete "${m.title}"?`)) return;
-                  removeMagazine(m.id);
+                  await removeMagazine(m.id);
                   logChange({
                     actorEmail,
                     actorRole,
@@ -150,7 +159,7 @@ function MagazinesPage() {
                     detail: `Removed magazine for ${m.organization}`,
                   });
                   toast.success("Deleted");
-                  load();
+                  void load();
                 }}
               />
             ))}
@@ -163,7 +172,7 @@ function MagazinesPage() {
           onClose={() => setShowForm(false)}
           onSaved={() => {
             setShowForm(false);
-            load();
+            void load();
           }}
           userEmail={user.email ?? null}
           actorRole={actorRole}
@@ -176,7 +185,7 @@ function MagazinesPage() {
           onClose={() => setEditingMagazine(null)}
           onSaved={() => {
             setEditingMagazine(null);
-            load();
+            void load();
           }}
           userEmail={user.email ?? null}
           actorRole={actorRole}
@@ -207,8 +216,10 @@ function MagazineCard({
   const [appliedNow, setAppliedNow] = useState(false);
 
   useEffect(() => {
-    setAppliedNow(isApplied(userEmail, m.id));
-    const h = () => setAppliedNow(isApplied(userEmail, m.id));
+    void isApplied(userEmail, m.id).then(setAppliedNow);
+    const h = () => {
+      void isApplied(userEmail, m.id).then(setAppliedNow);
+    };
     window.addEventListener(APPLIED_CHANGED_EVENT, h);
     return () => window.removeEventListener(APPLIED_CHANGED_EVENT, h);
   }, [userEmail, m.id]);
@@ -250,10 +261,10 @@ function MagazineCard({
     window.open(m.registration_link, "_blank", "noopener,noreferrer");
   };
 
-  const handleMarkApplied = () => {
+  const handleMarkApplied = async () => {
     if (!ensureCanApply() || !userEmail) return;
 
-    markApplied(userEmail, {
+    await markApplied(userEmail, {
       id: m.id,
       title: m.title,
       organization: m.organization,
@@ -396,7 +407,7 @@ function NewMagazineDialog({
   });
   const [saving, setSaving] = useState(false);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (
       !form.title ||
@@ -427,8 +438,8 @@ function NewMagazineDialog({
       };
 
       if (isEditing && magazine) {
-        updateMagazine(magazine.id, payload);
-        logChange({
+        await updateMagazine(magazine.id, payload);
+        await logChange({
           actorEmail: userEmail ?? "unknown@lexora.local",
           actorRole,
           action: "magazine.update",
@@ -436,8 +447,8 @@ function NewMagazineDialog({
           detail: `Updated magazine for ${payload.organization}`,
         });
       } else {
-        addMagazine(payload);
-        logChange({
+        await addMagazine(payload);
+        await logChange({
           actorEmail: userEmail ?? "unknown@lexora.local",
           actorRole,
           action: "magazine.add",

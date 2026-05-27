@@ -99,7 +99,7 @@ function MembersPage() {
   const actorRole = role === "owner" ? "owner" : "admin";
 
   const load = () => {
-    setMembers(getMembers());
+    void getMembers().then(setMembers);
   };
 
   useEffect(() => {
@@ -175,7 +175,7 @@ function MembersPage() {
               onEdit={() => setEditingMember(m)}
               onDelete={() => {
                 if (!confirm(`Remove ${m.name}?`)) return;
-                removeMember(m.id);
+                void removeMember(m.id);
                 logChange({
                   actorEmail,
                   actorRole,
@@ -208,7 +208,7 @@ function MembersPage() {
                 onEdit={() => setEditingMember(m)}
                 onDelete={() => {
                   if (!confirm(`Remove ${m.name}?`)) return;
-                  removeMember(m.id);
+                  void removeMember(m.id);
                   logChange({
                     actorEmail,
                     actorRole,
@@ -283,7 +283,7 @@ function MemberDialog({
     reader.readAsDataURL(file);
   };
 
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault();
 
     const name = form.name.trim();
@@ -297,12 +297,12 @@ function MemberDialog({
       setSaving(true);
 
       if (isEditing && member) {
-        updateMember(member.id, {
+        await updateMember(member.id, {
           ...form,
           name,
           image,
         });
-        logChange({
+        await logChange({
           actorEmail,
           actorRole,
           action: "member.update",
@@ -311,12 +311,12 @@ function MemberDialog({
         });
         toast.success("Member updated");
       } else {
-        addMember({
+        await addMember({
           ...form,
           name,
           image,
         });
-        logChange({
+        await logChange({
           actorEmail,
           actorRole,
           action: "member.add",

@@ -54,7 +54,7 @@ function InternshipsPage() {
   const actorRole = role === "owner" ? "owner" : "admin";
 
   const load = () => {
-    setItems(getInternships());
+    void getInternships().then(setItems);
   };
 
   useEffect(() => {
@@ -134,9 +134,9 @@ function InternshipsPage() {
                 isProfileComplete={isProfileComplete}
                 userEmail={user?.email ?? null}
                 onEdit={() => setEditingInternship(internship)}
-                onDelete={() => {
+                onDelete={async () => {
                   if (!confirm(`Delete "${internship.title}"?`)) return;
-                  removeInternship(internship.id);
+                  void removeInternship(internship.id);
                   logChange({
                     actorEmail,
                     actorRole,
@@ -202,8 +202,10 @@ function InternshipCard({
   const [appliedNow, setAppliedNow] = useState(false);
 
   useEffect(() => {
-    setAppliedNow(isApplied(userEmail, internship.id));
-    const onAppliedChanged = () => setAppliedNow(isApplied(userEmail, internship.id));
+    void isApplied(userEmail, internship.id).then(setAppliedNow);
+    const onAppliedChanged = () => {
+      void isApplied(userEmail, internship.id).then(setAppliedNow);
+    };
     window.addEventListener(APPLIED_CHANGED_EVENT, onAppliedChanged);
     return () =>
       window.removeEventListener(APPLIED_CHANGED_EVENT, onAppliedChanged);
@@ -250,10 +252,10 @@ function InternshipCard({
     window.open(internship.registrationLink, "_blank", "noopener,noreferrer");
   };
 
-  const handleMarkApplied = () => {
+  const handleMarkApplied = async () => {
     if (!ensureCanApply() || !userEmail) return;
 
-    markApplied(userEmail, {
+    await markApplied(userEmail, {
       id: internship.id,
       title: internship.title,
       organization: internship.organization,
@@ -400,7 +402,7 @@ function InternshipDialog({
   });
   const [saving, setSaving] = useState(false);
 
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault();
 
     if (
@@ -432,8 +434,8 @@ function InternshipDialog({
       };
 
       if (isEditing && internship) {
-        updateInternship(internship.id, payload);
-        logChange({
+        await updateInternship(internship.id, payload);
+        await logChange({
           actorEmail: userEmail ?? "unknown@lexora.local",
           actorRole,
           action: "internship.update",
@@ -441,8 +443,8 @@ function InternshipDialog({
           detail: `Updated internship for ${payload.organization}`,
         });
       } else {
-        addInternship(payload);
-        logChange({
+        await addInternship(payload);
+        await logChange({
           actorEmail: userEmail ?? "unknown@lexora.local",
           actorRole,
           action: "internship.add",

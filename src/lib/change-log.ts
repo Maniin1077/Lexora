@@ -1,4 +1,5 @@
 import { UserRole } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 
 export type ChangeActorRole = "owner" | "admin";
 
@@ -42,15 +43,6 @@ export interface LogChangeInput {
 export const CHANGE_LOG_KEY = "lexora.change-log";
 export const CHANGE_LOG_CHANGED_EVENT = "lexora:change-log-changed";
 
-function safeParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 function makeId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `log-${crypto.randomUUID()}`;
@@ -58,52 +50,70 @@ function makeId() {
   return `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function writeLogs(logs: ChangeLogEntry[]) {
+function dispatchChanged() {
   if (typeof window === "undefined") return;
-  localStorage.setItem(CHANGE_LOG_KEY, JSON.stringify(logs));
   window.dispatchEvent(new CustomEvent(CHANGE_LOG_CHANGED_EVENT));
 }
 
-export function getChangeLogs(): ChangeLogEntry[] {
-  if (typeof window === "undefined") return [];
-  const parsed = safeParse<ChangeLogEntry[]>(
-    localStorage.getItem(CHANGE_LOG_KEY),
-    [],
-  );
-
-  return parsed.sort(
-    (a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
+function fromRow(row: {
+  id: string;
+  actor_email: string;
+  actor_role: ChangeActorRole;
+  action: ChangeAction;
+  target: string;
+  detail: string | null;
+  created_at: string;
+}): ChangeLogEntry {
+  return {
+    id: row.id,
+    actorEmail: row.actor_email,
+    actorRole: row.actor_role,
+    action: row.action,
+    target: row.target,
+    detail: row.detail ?? undefined,
+    createdAt: row.created_at,
+  };
 }
 
-export function logChange(input: LogChangeInput): ChangeLogEntry {
-  const entry: ChangeLogEntry = {
+export async function getChangeLogs(): Promise<ChangeLogEntry[]> {
+  const { data, error } = await supabase
+    .from("change_logs")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("getChangeLogs error", error);
+    return [];
+  }
+
+  return (data ?? []).map((row) => fromRow(row as any));
+}
+
+export async function logChange(input: LogChangeInput): Promise<ChangeLogEntry> {
+  const entry = {
     id: makeId(),
-    actorEmail: input.actorEmail.trim().toLowerCase(),
-    actorRole: input.actorRole,
+    actor_email: input.actorEmail.trim().toLowerCase(),
+    actor_role: input.actorRole,
     action: input.action,
     target: input.target.trim(),
-    detail: input.detail?.trim() || undefined,
-    createdAt: new Date().toISOString(),
+    detail: input.detail?.trim() || null,
+    created_at: new Date().toISOString(),
   };
 
-  const current = getChangeLogs();
-  const next = [entry, ...current].slice(0, 300);
-  writeLogs(next);
-  return entry;
+  const { error } = await supabase.from("change_logs").insert(entry);
+  if (error) throw error;
+  dispatchChanged();
+  return fromRow(entry);
 }
 
-export function getVisibleChangeLogsForRole(role: UserRole): ChangeLogEntry[] {
-  const all = getChangeLogs();
+export async function getVisibleChangeLogsForRole(role: UserRole): Promise<ChangeLogEntry[]> {
+  const all = await getChangeLogs();
 
   if (role === "owner") {
-    // Owner can review all modifications.
     return all;
   }
 
   if (role === "admin") {
-    // Admins can review admin modifications only, not owner edits.
     return all.filter((entry) => entry.actorRole === "admin");
   }
 

@@ -1,4 +1,5 @@
 import logo from "@/assets/lexora-logo.jpg";
+import { supabase } from "@/integrations/supabase/client";
 
 export const SITE_CONTENT_KEY = "lexora.site-content";
 export const SITE_CONTENT_CHANGED_EVENT = "lexora:site-content-changed";
@@ -163,20 +164,96 @@ function safeParse<T>(raw: string | null, fallback: T): T {
   }
 }
 
-function readStore(): SiteContentStore {
-  if (typeof window === "undefined") return {};
-  return safeParse<SiteContentStore>(localStorage.getItem(SITE_CONTENT_KEY), {});
+function normalizeText(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return value.trim();
 }
 
-function writeStore(store: SiteContentStore) {
+function dispatchChanged() {
   if (typeof window === "undefined") return;
-  localStorage.setItem(SITE_CONTENT_KEY, JSON.stringify(store));
   window.dispatchEvent(new CustomEvent(SITE_CONTENT_CHANGED_EVENT));
 }
 
-function cleanText(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  return value.trim();
+function emptyStore(): SiteContentStore {
+  return {};
+}
+
+function toStoreRow(contentKey: string, content: unknown) {
+  return {
+    content_key: contentKey,
+    content,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+let cache: SiteContentStore = emptyStore();
+let hydrated = false;
+let hydratePromise: Promise<void> | null = null;
+
+async function hydrateSiteContent() {
+  if (typeof window === "undefined") return;
+  if (hydratePromise) return hydratePromise;
+
+  hydratePromise = (async () => {
+    const { data, error } = await supabase.from("site_content").select("*");
+    if (error) {
+      console.error("hydrateSiteContent error", error);
+      hydrated = true;
+      return;
+    }
+
+    const next: SiteContentStore = emptyStore();
+    for (const row of data ?? []) {
+      const key = String((row as { content_key?: string }).content_key ?? "");
+      const content = (row as { content?: unknown }).content;
+      if (!key) continue;
+
+      if (key === "pageHeroes") next.pageHeroes = content as SiteContentStore["pageHeroes"];
+      if (key === "homeHero") next.homeHero = content as SiteContentStore["homeHero"];
+      if (key === "navigationLabels") next.navigationLabels = content as SiteContentStore["navigationLabels"];
+      if (key === "contactDetails") next.contactDetails = content as SiteContentStore["contactDetails"];
+    }
+
+    cache = next;
+    hydrated = true;
+    dispatchChanged();
+  })();
+
+  return hydratePromise;
+}
+
+void hydrateSiteContent();
+
+const siteContentChannel = typeof window === "undefined"
+  ? null
+  : supabase
+      .channel("public:site_content")
+      .on("postgres_changes", { event: "*", schema: "public", table: "site_content" }, () => {
+        void hydrateSiteContent();
+      });
+
+if (siteContentChannel) {
+  void siteContentChannel.subscribe();
+}
+
+function readStore(): SiteContentStore {
+  return cache;
+}
+
+async function persistStore(next: SiteContentStore) {
+  if (typeof window === "undefined") return;
+  cache = next;
+
+  const rows = [
+    next.pageHeroes ? toStoreRow("pageHeroes", next.pageHeroes) : null,
+    next.homeHero ? toStoreRow("homeHero", next.homeHero) : null,
+    next.navigationLabels ? toStoreRow("navigationLabels", next.navigationLabels) : null,
+    next.contactDetails ? toStoreRow("contactDetails", next.contactDetails) : null,
+  ].filter(Boolean) as Array<{ content_key: string; content: unknown; updated_at: string }>;
+
+  const { error } = await supabase.from("site_content").upsert(rows);
+  if (error) throw error;
+  dispatchChanged();
 }
 
 export function getPageHeroContent(
@@ -192,9 +269,9 @@ export function getPageHeroContent(
   }
 
   return {
-    eyebrow: cleanText(override.eyebrow) || defaults.eyebrow,
-    title: cleanText(override.title) || defaults.title,
-    subtitle: cleanText(override.subtitle) || defaults.subtitle,
+    eyebrow: normalizeText(override.eyebrow) || defaults.eyebrow,
+    title: normalizeText(override.title) || defaults.title,
+    subtitle: normalizeText(override.subtitle) || defaults.subtitle,
   };
 }
 
@@ -203,20 +280,20 @@ export function setPageHeroContent(key: PageHeroKey, content: PageHeroContent) {
   const pageHeroes = {
     ...(store.pageHeroes ?? {}),
     [key]: {
-      eyebrow: cleanText(content.eyebrow) || "",
-      title: cleanText(content.title) || PAGE_HERO_DEFAULTS[key].title,
-      subtitle: cleanText(content.subtitle) || "",
+      eyebrow: normalizeText(content.eyebrow) || "",
+      title: normalizeText(content.title) || PAGE_HERO_DEFAULTS[key].title,
+      subtitle: normalizeText(content.subtitle) || "",
     },
   };
 
-  writeStore({ ...store, pageHeroes });
+  void persistStore({ ...store, pageHeroes });
 }
 
 export function resetPageHeroContent(key: PageHeroKey) {
   const store = readStore();
   const pageHeroes = { ...(store.pageHeroes ?? {}) };
   delete pageHeroes[key];
-  writeStore({ ...store, pageHeroes });
+  void persistStore({ ...store, pageHeroes });
 }
 
 export function getHomeHeroContent(
@@ -230,42 +307,42 @@ export function getHomeHeroContent(
   }
 
   return {
-    motto: cleanText(override.motto) || fallback.motto,
-    titleLineOne: cleanText(override.titleLineOne) || fallback.titleLineOne,
-    titleAccent: cleanText(override.titleAccent) || fallback.titleAccent,
-    description: cleanText(override.description) || fallback.description,
+    motto: normalizeText(override.motto) || fallback.motto,
+    titleLineOne: normalizeText(override.titleLineOne) || fallback.titleLineOne,
+    titleAccent: normalizeText(override.titleAccent) || fallback.titleAccent,
+    description: normalizeText(override.description) || fallback.description,
     primaryCtaText:
-      cleanText(override.primaryCtaText) || fallback.primaryCtaText,
+      normalizeText(override.primaryCtaText) || fallback.primaryCtaText,
     secondaryCtaText:
-      cleanText(override.secondaryCtaText) || fallback.secondaryCtaText,
-    image: cleanText(override.image) || fallback.image,
+      normalizeText(override.secondaryCtaText) || fallback.secondaryCtaText,
+    image: normalizeText(override.image) || fallback.image,
   };
 }
 
 export function setHomeHeroContent(content: HomeHeroContent) {
   const store = readStore();
   const homeHero: HomeHeroContent = {
-    motto: cleanText(content.motto) || HOME_HERO_DEFAULTS.motto,
+    motto: normalizeText(content.motto) || HOME_HERO_DEFAULTS.motto,
     titleLineOne:
-      cleanText(content.titleLineOne) || HOME_HERO_DEFAULTS.titleLineOne,
-    titleAccent: cleanText(content.titleAccent) || HOME_HERO_DEFAULTS.titleAccent,
+      normalizeText(content.titleLineOne) || HOME_HERO_DEFAULTS.titleLineOne,
+    titleAccent: normalizeText(content.titleAccent) || HOME_HERO_DEFAULTS.titleAccent,
     description:
-      cleanText(content.description) || HOME_HERO_DEFAULTS.description,
+      normalizeText(content.description) || HOME_HERO_DEFAULTS.description,
     primaryCtaText:
-      cleanText(content.primaryCtaText) || HOME_HERO_DEFAULTS.primaryCtaText,
+      normalizeText(content.primaryCtaText) || HOME_HERO_DEFAULTS.primaryCtaText,
     secondaryCtaText:
-      cleanText(content.secondaryCtaText) || HOME_HERO_DEFAULTS.secondaryCtaText,
-    image: cleanText(content.image) || HOME_HERO_DEFAULTS.image,
+      normalizeText(content.secondaryCtaText) || HOME_HERO_DEFAULTS.secondaryCtaText,
+    image: normalizeText(content.image) || HOME_HERO_DEFAULTS.image,
   };
 
-  writeStore({ ...store, homeHero });
+  void persistStore({ ...store, homeHero });
 }
 
 export function resetHomeHeroContent() {
   const store = readStore();
   const next = { ...store };
   delete next.homeHero;
-  writeStore(next);
+  void persistStore(next);
 }
 
 export function getNavigationLabels(
@@ -280,7 +357,7 @@ export function getNavigationLabels(
 
   const next = {} as Record<NavLabelKey, string>;
   for (const key of NAV_LABEL_KEYS) {
-    next[key] = cleanText(override[key]) || fallback[key];
+    next[key] = normalizeText(override[key]) || fallback[key];
   }
 
   return next;
@@ -291,17 +368,17 @@ export function setNavigationLabels(labels: Record<NavLabelKey, string>) {
   const navigationLabels = {} as Record<NavLabelKey, string>;
 
   for (const key of NAV_LABEL_KEYS) {
-    navigationLabels[key] = cleanText(labels[key]) || NAV_LABEL_DEFAULTS[key];
+    navigationLabels[key] = normalizeText(labels[key]) || NAV_LABEL_DEFAULTS[key];
   }
 
-  writeStore({ ...store, navigationLabels });
+  void persistStore({ ...store, navigationLabels });
 }
 
 export function resetNavigationLabels() {
   const store = readStore();
   const next = { ...store };
   delete next.navigationLabels;
-  writeStore(next);
+  void persistStore(next);
 }
 
 export function getContactDetails(
@@ -315,55 +392,55 @@ export function getContactDetails(
   }
 
   return {
-    email: cleanText(override.email) || fallback.email,
+    email: normalizeText(override.email) || fallback.email,
     secondaryEmailLabel:
-      cleanText(override.secondaryEmailLabel) || fallback.secondaryEmailLabel,
+      normalizeText(override.secondaryEmailLabel) || fallback.secondaryEmailLabel,
     secondaryEmail:
-      cleanText(override.secondaryEmail) || fallback.secondaryEmail,
+      normalizeText(override.secondaryEmail) || fallback.secondaryEmail,
     tertiaryEmailLabel:
-      cleanText(override.tertiaryEmailLabel) || fallback.tertiaryEmailLabel,
+      normalizeText(override.tertiaryEmailLabel) || fallback.tertiaryEmailLabel,
     tertiaryEmail:
-      cleanText(override.tertiaryEmail) || fallback.tertiaryEmail,
-    linkedInUrl: cleanText(override.linkedInUrl) || fallback.linkedInUrl,
-    linkedInLabel: cleanText(override.linkedInLabel) || fallback.linkedInLabel,
-    instagramUrl: cleanText(override.instagramUrl) || fallback.instagramUrl,
+      normalizeText(override.tertiaryEmail) || fallback.tertiaryEmail,
+    linkedInUrl: normalizeText(override.linkedInUrl) || fallback.linkedInUrl,
+    linkedInLabel: normalizeText(override.linkedInLabel) || fallback.linkedInLabel,
+    instagramUrl: normalizeText(override.instagramUrl) || fallback.instagramUrl,
     instagramLabel:
-      cleanText(override.instagramLabel) || fallback.instagramLabel,
+      normalizeText(override.instagramLabel) || fallback.instagramLabel,
   };
 }
 
 export function setContactDetails(content: ContactDetailsContent) {
   const store = readStore();
   const contactDetails: ContactDetailsContent = {
-    email: cleanText(content.email) || CONTACT_DETAILS_DEFAULTS.email,
+    email: normalizeText(content.email) || CONTACT_DETAILS_DEFAULTS.email,
     secondaryEmailLabel:
-      cleanText(content.secondaryEmailLabel) ||
+      normalizeText(content.secondaryEmailLabel) ||
       CONTACT_DETAILS_DEFAULTS.secondaryEmailLabel,
     secondaryEmail:
-      cleanText(content.secondaryEmail) ||
+      normalizeText(content.secondaryEmail) ||
       CONTACT_DETAILS_DEFAULTS.secondaryEmail,
     tertiaryEmailLabel:
-      cleanText(content.tertiaryEmailLabel) ||
+      normalizeText(content.tertiaryEmailLabel) ||
       CONTACT_DETAILS_DEFAULTS.tertiaryEmailLabel,
     tertiaryEmail:
-      cleanText(content.tertiaryEmail) ||
+      normalizeText(content.tertiaryEmail) ||
       CONTACT_DETAILS_DEFAULTS.tertiaryEmail,
     linkedInUrl:
-      cleanText(content.linkedInUrl) || CONTACT_DETAILS_DEFAULTS.linkedInUrl,
+      normalizeText(content.linkedInUrl) || CONTACT_DETAILS_DEFAULTS.linkedInUrl,
     linkedInLabel:
-      cleanText(content.linkedInLabel) || CONTACT_DETAILS_DEFAULTS.linkedInLabel,
+      normalizeText(content.linkedInLabel) || CONTACT_DETAILS_DEFAULTS.linkedInLabel,
     instagramUrl:
-      cleanText(content.instagramUrl) || CONTACT_DETAILS_DEFAULTS.instagramUrl,
+      normalizeText(content.instagramUrl) || CONTACT_DETAILS_DEFAULTS.instagramUrl,
     instagramLabel:
-      cleanText(content.instagramLabel) || CONTACT_DETAILS_DEFAULTS.instagramLabel,
+      normalizeText(content.instagramLabel) || CONTACT_DETAILS_DEFAULTS.instagramLabel,
   };
 
-  writeStore({ ...store, contactDetails });
+  void persistStore({ ...store, contactDetails });
 }
 
 export function resetContactDetails() {
   const store = readStore();
   const next = { ...store };
   delete next.contactDetails;
-  writeStore(next);
+  void persistStore(next);
 }

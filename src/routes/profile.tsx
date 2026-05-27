@@ -4,6 +4,7 @@ import { Calendar, KeyRound, LockKeyhole, Mail, ShieldCheck, Trash2 } from "luci
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { PageHero } from "@/components/site/PageHero";
 import { AUTH_ACCOUNTS_KEY, useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import {
   APPLIED_CHANGED_EVENT,
   AppliedItem,
@@ -25,21 +26,18 @@ export const Route = createFileRoute("/profile")({
   component: ProfilePage,
 });
 
-function readCurrentSecurityQuestion(email: string) {
-  if (typeof window === "undefined") return "";
+async function readCurrentSecurityQuestion(email: string) {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return "";
 
-  try {
-    const raw = localStorage.getItem(AUTH_ACCOUNTS_KEY);
-    const accounts = raw
-      ? (JSON.parse(raw) as Array<{ email?: string; securityQuestion?: string }>)
-      : [];
-    const match = accounts.find(
-      (account) => String(account.email ?? "").trim().toLowerCase() === email.trim().toLowerCase(),
-    );
-    return String(match?.securityQuestion ?? "").trim();
-  } catch {
-    return "";
-  }
+  const { data, error } = await supabase
+    .from("user_profiles")
+    .select("security_question")
+    .eq("email", normalized)
+    .maybeSingle();
+
+  if (error || !data) return "";
+  return String((data as { security_question?: string }).security_question ?? "").trim();
 }
 
 function ProfilePage() {
@@ -81,7 +79,9 @@ function ProfilePage() {
   }, [loading, user, navigate]);
 
   useEffect(() => {
-    const load = () => setApplied(getApplied(user?.email));
+    const load = () => {
+      void getApplied(user?.email).then(setApplied);
+    };
     load();
     window.addEventListener(APPLIED_CHANGED_EVENT, load);
     return () => window.removeEventListener(APPLIED_CHANGED_EVENT, load);
@@ -89,15 +89,14 @@ function ProfilePage() {
 
   useEffect(() => {
     if (!user) return;
+    void readCurrentSecurityQuestion(user.email).then((question) =>
+      setRecoveryForm({ securityQuestion: question, securityAnswer: "" }),
+    );
     setProfileForm({
       firstName: user.firstName,
       lastName: user.lastName,
       course: user.course,
       institute: user.institute,
-    });
-    setRecoveryForm({
-      securityQuestion: readCurrentSecurityQuestion(user.email),
-      securityAnswer: "",
     });
     setCredentialForm({
       currentPassword: "",
@@ -546,7 +545,7 @@ function AppliedOpportunityRow({
           </a>
         )}
         <button
-          onClick={() => removeApplied(userEmail, item.id)}
+          onClick={() => void removeApplied(userEmail, item.id)}
           className="inline-flex items-center gap-1 rounded-md border border-destructive/30 px-3 py-2 text-xs font-medium text-destructive hover:bg-destructive/10"
           aria-label="Remove from history"
         >

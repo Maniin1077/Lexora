@@ -1,3 +1,5 @@
+import { supabase } from "@/integrations/supabase/client";
+
 export interface MagazineItem {
   id: string;
   title: string;
@@ -23,81 +25,83 @@ export interface MagazineInput {
 export const MAGAZINES_KEY = "lexora.magazines";
 export const MAGAZINES_CHANGED_EVENT = "lexora:magazines-changed";
 
-function safeParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
+let _cache: MagazineItem[] | null = null;
 
 function notifyChanged() {
   if (typeof window === "undefined") return;
+  // keep the old event so UI code can reuse it
   window.dispatchEvent(new CustomEvent(MAGAZINES_CHANGED_EVENT));
 }
 
-function writeMagazines(items: MagazineItem[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(MAGAZINES_KEY, JSON.stringify(items));
+export async function getMagazines(): Promise<MagazineItem[]> {
+  if (_cache) return _cache;
+
+  const { data, error } = await supabase
+    .from("magazines")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("getMagazines error", error);
+    return [];
+  }
+
+  _cache = (data ?? []) as MagazineItem[];
+  return _cache;
+}
+
+export async function addMagazine(input: MagazineInput): Promise<MagazineItem | null> {
+  const payload = { ...input, created_at: new Date().toISOString() };
+  const { data, error } = await supabase.from("magazines").insert(payload).select().single();
+  if (error) throw error;
+  _cache = null;
+  notifyChanged();
+  return data as MagazineItem;
+}
+
+export async function updateMagazine(id: string, input: MagazineInput): Promise<MagazineItem | null> {
+  const { data, error } = await supabase
+    .from("magazines")
+    .update(input)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  _cache = null;
+  notifyChanged();
+  return data as MagazineItem;
+}
+
+export async function removeMagazine(id: string): Promise<void> {
+  const { error } = await supabase.from("magazines").delete().eq("id", id);
+  if (error) throw error;
+  _cache = null;
   notifyChanged();
 }
 
-function makeId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
+export function subscribeMagazines(onChange: () => void) {
+  // subscribe to Postgres changes for magazines and notify the app
+  try {
+    const chan: any = supabase.channel("public:magazines").on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "magazines" },
+      (payload: any) => {
+        _cache = null;
+        notifyChanged();
+        onChange();
+      },
+    );
+
+    void chan.subscribe();
+
+    return () => {
+      try {
+        void chan.unsubscribe();
+      } catch (e) {
+        // ignore
+      }
+    };
+  } catch (e) {
+    return () => {};
   }
-  return `mag_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-export function getMagazines(): MagazineItem[] {
-  if (typeof window === "undefined") return [];
-  return safeParse<MagazineItem[]>(localStorage.getItem(MAGAZINES_KEY), []);
-}
-
-export function addMagazine(input: MagazineInput): MagazineItem {
-  const next: MagazineItem = {
-    id: makeId(),
-    title: input.title,
-    organization: input.organization,
-    description: input.description,
-    registration_link: input.registration_link,
-    deadline: input.deadline,
-    tags: input.tags,
-    posted_by_email: input.posted_by_email,
-    created_at: new Date().toISOString(),
-  };
-
-  const items = getMagazines();
-  writeMagazines([next, ...items]);
-  return next;
-}
-
-export function updateMagazine(id: string, input: MagazineInput): MagazineItem {
-  const items = getMagazines();
-  const idx = items.findIndex((item) => item.id === id);
-  if (idx === -1) {
-    throw new Error("Opportunity not found.");
-  }
-
-  const updatedItem: MagazineItem = {
-    ...items[idx],
-    title: input.title,
-    organization: input.organization,
-    description: input.description,
-    registration_link: input.registration_link,
-    deadline: input.deadline,
-    tags: input.tags,
-    posted_by_email: input.posted_by_email,
-  };
-
-  const next = [...items];
-  next[idx] = updatedItem;
-  writeMagazines(next);
-  return updatedItem;
-}
-
-export function removeMagazine(id: string) {
-  const next = getMagazines().filter((item) => item.id !== id);
-  writeMagazines(next);
 }

@@ -166,14 +166,17 @@ function formatAction(action: ChangeAction): string {
   }
 }
 
-function collectStats(role: UserRole, adminCount: number, managedAdminCount: number): {
+async function collectStats(role: UserRole, adminCount: number, managedAdminCount: number): Promise<{
   stats: DashboardStats;
   users: AdminAccountRecord[];
   logs: ChangeLogEntry[];
-} {
+}> {
   const users = getAllUsersForAdmin();
-  const summary = getApplicationSummary();
-  const logs = getVisibleChangeLogsForRole(role);
+  const summary = await getApplicationSummary();
+  const logs = await getVisibleChangeLogsForRole(role);
+  const members = await getMembers();
+  const internships = await getInternships();
+  const magazines = await getMagazines();
 
   return {
     users,
@@ -182,9 +185,9 @@ function collectStats(role: UserRole, adminCount: number, managedAdminCount: num
       usersTotal: users.length,
       adminsTotal: adminCount,
       managedAdmins: managedAdminCount,
-      membersTotal: getMembers().length,
-      internshipsTotal: getInternships().length,
-      magazinesTotal: getMagazines().length,
+      membersTotal: members.length,
+      internshipsTotal: internships.length,
+      magazinesTotal: magazines.length,
       usersAppliedInternships: summary.usersAppliedInternships,
       usersAppliedMagazines: summary.usersAppliedMagazines,
       totalInternshipApplications: summary.totalInternshipApplications,
@@ -265,8 +268,8 @@ function AdminPage() {
     message: "",
   });
 
-  const loadDashboard = useCallback(() => {
-    const snapshot = collectStats(role, adminEmails.length, managedAdminEmails.length);
+  const loadDashboard = useCallback(async () => {
+    const snapshot = await collectStats(role, adminEmails.length, managedAdminEmails.length);
     setUsers(snapshot.users);
     setLogs(snapshot.logs);
     setStats(snapshot.stats);
@@ -547,7 +550,7 @@ function AdminPage() {
 
     try {
       setSendingMessage(true);
-      createNotification({
+      await createNotification({
         targetEmail: targetEmail || null,
         title,
         message,
