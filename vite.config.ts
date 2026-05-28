@@ -6,5 +6,8 @@ export default defineConfig({
   plugins: [nitro({ preset: "vercel" })],
   vite: {
     base: "/",
+    ssr: {
+      noExternal: ["tslib"],
+    },
   },
 });
