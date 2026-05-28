@@ -189,6 +189,7 @@ function toStoreRow(contentKey: string, content: unknown) {
 let cache: SiteContentStore = emptyStore();
 let hydrated = false;
 let hydratePromise: Promise<void> | null = null;
+let hydrateScheduled = false;
 
 async function hydrateSiteContent() {
   if (typeof window === "undefined") return;
@@ -222,7 +223,14 @@ async function hydrateSiteContent() {
   return hydratePromise;
 }
 
-void hydrateSiteContent();
+function ensureHydrated() {
+  if (typeof window === "undefined") return;
+  if (hydrateScheduled) return;
+  hydrateScheduled = true;
+  queueMicrotask(() => {
+    void hydrateSiteContent();
+  });
+}
 
 const siteContentChannel = typeof window === "undefined"
   ? null
@@ -237,6 +245,7 @@ if (siteContentChannel) {
 }
 
 function readStore(): SiteContentStore {
+  ensureHydrated();
   return cache;
 }
 

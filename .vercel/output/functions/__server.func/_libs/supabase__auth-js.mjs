@@ -1,4 +1,4 @@
-import { __rest } from "tslib";
+import { _ as __rest } from "./@supabase/functions-js.mjs";
 const version = "2.105.3";
 const AUTO_REFRESH_TICK_DURATION_MS = 30 * 1e3;
 const AUTO_REFRESH_TICK_THRESHOLD = 3;

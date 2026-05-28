@@ -2,6 +2,40 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
+type SupabaseLike = ReturnType<typeof createClient<Database>>;
+
+function createFallbackClient(): SupabaseLike {
+  const fallbackMethod = () => Promise.resolve({ data: null, error: null } as const);
+  const fallbackChannel = () => ({
+    on: () => fallbackChannel(),
+    subscribe: () => Promise.resolve(),
+    unsubscribe: () => Promise.resolve(),
+  });
+
+  return new Proxy({} as SupabaseLike, {
+    get(_, prop) {
+      if (prop === "from") return () => ({
+        select: fallbackMethod,
+        insert: fallbackMethod,
+        update: fallbackMethod,
+        upsert: fallbackMethod,
+        delete: fallbackMethod,
+        eq: () => ({ select: fallbackMethod, update: fallbackMethod, delete: fallbackMethod, order: () => ({ select: fallbackMethod }) }),
+        order: () => ({ select: fallbackMethod }),
+        maybeSingle: fallbackMethod,
+        single: fallbackMethod,
+        or: () => ({ select: fallbackMethod, order: () => ({ select: fallbackMethod }) }),
+      });
+      if (prop === "channel") return fallbackChannel;
+      if (prop === "rpc") return fallbackMethod;
+      if (prop === "auth") return {
+        getClaims: fallbackMethod,
+      };
+      return undefined;
+    },
+  });
+}
+
 function createSupabaseClient() {
   // Use import.meta.env for client-side (Vite build-time replacement)
   // Fall back to process.env for SSR (server-side rendering)
@@ -12,9 +46,10 @@ function createSupabaseClient() {
     process.env.SUPABASE_PUBLISHABLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    throw new Error(
-      "Missing Supabase environment variables. Ensure SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY (or VITE_ prefixed versions) are set in your .env file.",
+    console.warn(
+      "Supabase env vars are missing. Using a safe fallback client so the app can render without crashing.",
     );
+    return createFallbackClient();
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {

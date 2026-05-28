@@ -263,6 +263,9 @@ function seedFromLocalStorage() {
 }
 
 async function hydrateAuthData() {
+  if (typeof window === "undefined") {
+    return;
+  }
   if (hydratePromise) return hydratePromise;
 
   hydratePromise = (async () => {
@@ -296,8 +299,6 @@ async function hydrateAuthData() {
 
   return hydratePromise;
 }
-
-void hydrateAuthData();
 
 const authChannel =
   typeof window === "undefined"

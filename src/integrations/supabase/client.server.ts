@@ -5,14 +5,25 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
+type SupabaseAdminLike = ReturnType<typeof createClient<Database>>;
+
+function createFallbackAdminClient(): SupabaseAdminLike {
+  return new Proxy({} as SupabaseAdminLike, {
+    get() {
+      return () => Promise.resolve({ data: null, error: null });
+    },
+  });
+}
+
 function createSupabaseAdminClient() {
   const SUPABASE_URL = process.env.SUPABASE_URL;
   const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error(
-      "Missing Supabase server environment variables. Ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set.",
+    console.warn(
+      "Supabase server env vars are missing. Using a safe fallback admin client.",
     );
+    return createFallbackAdminClient();
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {

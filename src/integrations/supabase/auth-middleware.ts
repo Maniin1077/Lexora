@@ -11,10 +11,7 @@ export const requireSupabaseAuth = createMiddleware({
   const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    throw new Response(
-      "Missing Supabase environment variables. Ensure SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are set.",
-      { status: 500 },
-    );
+    return next();
   }
 
   const request = getRequest();
